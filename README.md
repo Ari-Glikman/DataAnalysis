@@ -1,4 +1,4 @@
-![image](https://github.com/Ari-Glikman/DataAnalysis/assets/73805987/60ea6ee3-ec64-4627-b920-558eb1a082d2)### Data Analysis
+### Data Analysis
 
 This is the sequel to [Data Collection](https://github.com/Ari-Glikman/DataCollection/blob/main/README.md#data-collection). If you have not had a chance to go through and install that you should first do that.
 
@@ -15,7 +15,9 @@ This task will allow us to set parameters that we will be monitoring. They are a
 ![image](https://github.com/Ari-Glikman/DataAnalysis/assets/73805987/493ef16a-8c3d-4f4b-86a2-68a3f5d630c3)
 
 ***GrowthPercentageWarning:***	What percentage growth is 'acceptable' for a global to grow.
+
 ***PeriodWarning:*** How many days it's reasonable for the globals to make that growth in.
+
 ***HistoryLength:*** How far back to look back into the Sample_DBExpansion_Data.GlobalAnalysisInfo table.
 
 The default is set to a 5% growth in 7 days, looking back over the last 30 days. Once you set the parameters you can still edit them, even after the task has run one or several times. Go to task details, click edit, and change it how you see fit.
@@ -56,8 +58,10 @@ The task calls the *CreateReport* method of the [Sample.DBExpansion.DBSizeAnalys
 ![image](https://github.com/Ari-Glikman/DataAnalysis/assets/73805987/9db10ddc-2374-4729-b501-89d6382415b1)
 
   
-    ***BiggestGrower:*** the global with the greatest AmountGrown.
+   ***BiggestGrower:*** the global with the greatest AmountGrown.
+    
    ***NumGlobalsOvergrown:*** how many globals had the OverGrown flag
+   
    ***NumberOfMeasurementsInspected:*** how many measurements of each global were taken (how many times the Data Collection task was ran).
 
 Finally note that there is also a unit testing class. It should be used in the same way as [Data Collection](https://github.com/Ari-Glikman/DataCollection/blob/main/README.md#data-collection) used unit testing.
