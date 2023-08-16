@@ -1,0 +1,212 @@
+/// **********************************************************
+/// *                   ** N O T I C E **                    *
+/// *                - TEST/DEMO SOFTWARE -                  *
+/// * This code is not supported by InterSystems as part     *
+/// * of any released product.  It is supplied by            *
+/// * InterSystems as a demo/test tool for a specific        *
+/// * product and version. The user or customer is fully     *
+/// * responsible for the maintenance and testing of this    *
+/// * software after delivery, and InterSystems shall bear   *
+/// * no responsibility nor liabilities for errors or misuse *
+/// * of this code.                                          *
+/// **********************************************************
+
+/// Unit Testing for Global Investigation. Tests: GlobalInvestigationReport, InvestigationMeta, InvestigateInfo.
+Class Sample.DBExpansion.Test.InspectTest Extends %UnitTest.TestCase
+{
+
+Property GlobalMoment1 As Sample.DBExpansion.Data.GlobalAnalysisInfo;
+
+Property FakeDB1 As Sample.DBExpansion.Data.DBAnalysisInfo;
+
+Property GlobalMoment2 As Sample.DBExpansion.Data.GlobalAnalysisInfo;
+
+Property FakeDB2 As Sample.DBExpansion.Data.DBAnalysisInfo;
+
+Property GlobalMoment3 As Sample.DBExpansion.Data.GlobalAnalysisInfo;
+
+Property FakeDB3 As Sample.DBExpansion.Data.DBAnalysisInfo;
+
+Property GlobalMoment4 As Sample.DBExpansion.Data.GlobalAnalysisInfo;
+
+Property FakeDB4 As Sample.DBExpansion.Data.DBAnalysisInfo;
+
+// due to foreign key all globals need to be linked to db...
+
+Method OnBeforeAllTests() As %Status
+{
+		set fakeDB1 = ##class(Sample.DBExpansion.Data.DBAnalysisInfo).%New()
+		set fakeDB1.DatabaseName = "FakeTestDB"
+		set fakeDB1.TimeStampEnd = $ZDATETIME($HOROLOG-15,3) // 15 days ago
+		set fakeDB1.FastFlag = 1
+		set st = fakeDB1.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		set ..FakeDB1 = fakeDB1
+		set db1ID = fakeDB1.%Id()
+		
+		
+		set globalMoment1 = ##class(Sample.DBExpansion.Data.GlobalAnalysisInfo).%New()
+		set globalMoment1.AllocatedMB = 100
+		set globalMoment1.ClassName = "MyTestClass"
+		set globalMoment1.GlobalName = "TestGlobal"
+		
+		set globalMoment1.MetaData = fakeDB1
+		
+		///set globalMoment1.TimeStamp = $ZDATETIME($HOROLOG-15,3) //15 days ago
+		set globalMoment1.UsedMB = 100
+		set st = globalMoment1.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		
+		set ..GlobalMoment1 = globalMoment1
+
+
+		set fakeDB2 = ##class(Sample.DBExpansion.Data.DBAnalysisInfo).%New()
+		set fakeDB2.DatabaseName = "FakeTestDB"
+		set fakeDB2.TimeStampEnd = $ZDATETIME($HOROLOG-10,3) //10 days ago
+		set fakeDB2.FastFlag = 0
+		set st = fakeDB2.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		set ..FakeDB2 = fakeDB2
+		set db2ID = fakeDB2.%Id()
+		
+
+		set globalMoment2 = ##class(Sample.DBExpansion.Data.GlobalAnalysisInfo).%New()
+		set globalMoment2.AllocatedMB = 200
+		set globalMoment2.ClassName = "MyTestClass"
+		set globalMoment2.GlobalName = "TestGlobal"
+		set globalMoment2.MetaData = fakeDB2
+		///set globalMoment2.TimeStamp = $ZDATETIME($HOROLOG-10,3) //10 days ago
+		set globalMoment2.UsedMB = 	110
+		set st = globalMoment2.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		set ..GlobalMoment2 = globalMoment2
+		
+		
+		
+		
+		set fakeDB3 = ##class(Sample.DBExpansion.Data.DBAnalysisInfo).%New()
+		set fakeDB3.DatabaseName = "FakeTestDB"
+		set fakeDB3.TimeStampEnd = $ZDATETIME($HOROLOG-5,3) //5 days ago
+		set fakeDB3.FastFlag = 0
+		set st = fakeDB3.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		set ..FakeDB3 = fakeDB3
+		
+		set db3ID = fakeDB3.%Id()
+
+
+		
+		set globalMoment3 = ##class(Sample.DBExpansion.Data.GlobalAnalysisInfo).%New()
+		set globalMoment3.AllocatedMB = 50
+		set globalMoment3.ClassName = "MyTestClass"
+		set globalMoment3.GlobalName = "TestGlobal"
+		set globalMoment3.MetaData = fakeDB3
+		set globalMoment3.UsedMB = 	45
+		set st = globalMoment3.%Save()
+
+		if $$$ISERR(st)
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+
+		set ..GlobalMoment3 = globalMoment3
+		
+		////global moment 4
+		set fakeDB4 = ##class(Sample.DBExpansion.Data.DBAnalysisInfo).%New()
+		set fakeDB4.DatabaseName = "FakeTestDB"
+		set fakeDB4.TimeStampEnd = $ZDATETIME($HOROLOG,3) //5 days ago
+		set fakeDB4.FastFlag = 0
+		set st = fakeDB4.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		set ..FakeDB4 = fakeDB4
+		
+		set db4ID = fakeDB4.%Id()
+
+
+		
+		set globalMoment4 = ##class(Sample.DBExpansion.Data.GlobalAnalysisInfo).%New()
+		set globalMoment4.AllocatedMB = 125
+		set globalMoment4.ClassName = "MyTestClass"
+		set globalMoment4.GlobalName = "TestGlobal"
+		set globalMoment4.MetaData = fakeDB4
+		set globalMoment4.UsedMB = 	121
+		set st = globalMoment4.%Save()
+
+		if $$$ISERR(st)
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+
+		set ..GlobalMoment4 = globalMoment4
+
+
+
+
+
+		Quit $$$OK
+}
+
+Method TestGlobalSizeHistory()
+{
+	
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).CreateReport(20,10,300)
+	do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+
+	
+	&sql(SELECT AmountGrown, Decrease, FastFlagAll, GrowthForRequestedPeriod, HistoricGrowthPerDay, MaxGrowthMB, MaxGrowthNormalized, OverGrew, ReportNum 
+	INTO :myAmountGrown, :myDecrease, :myFastFlagAll, :myGrowthForRequestedPeriod, :myHistoricGrowthPerDay, :myMaxGrowthMB, :myMaxGrowthNormalized, :myOverGrew, :myReportNum
+	FROM Sample_DBExpansion_Data.GlobalInvestigationReport
+	WHERE ClassName = 'MyTestClass'
+	)
+	
+	do $$$AssertEquals(myAmountGrown, 25)
+	do $$$AssertEquals(myDecrease, 1)
+	
+	do $$$AssertEquals(myFastFlagAll, 1)
+	do $$$AssertEquals(myGrowthForRequestedPeriod, 16.66666666666666667)
+	do $$$AssertEquals(myHistoricGrowthPerDay, 1.666666666666666667)
+	do $$$AssertEquals(myMaxGrowthMB, 100)
+	do $$$AssertEquals(myMaxGrowthNormalized, 300)
+	do $$$AssertEquals(myOverGrew, 1)
+		
+
+}
+
+
+
+
+Method OnAfterAllTests() As %Status
+{
+		
+	&sql(DELETE FROM Sample_DBExpansion_Data.GlobalAnalysisInfo
+    WHERE (GlobalName = 'TestGlobal'))
+	
+	&sql(DELETE FROM Sample_DBExpansion_Data.DBAnalysisInfo WHERE (DatabaseName = 'FakeTestDB'))
+	
+
+	&sql(DELETE FROM Sample_DBExpansion_Data.InvestigationMeta WHERE BiggestGrower = 'TestGlobal')
+	
+	return $$$OK
+}
+
+
+
+}
