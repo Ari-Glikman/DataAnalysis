@@ -10,6 +10,8 @@
 /// * no responsibility nor liabilities for errors or misuse *
 /// * of this code.                                          *
 /// **********************************************************
+Class Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo Extends %RegisteredObject
+{
 
 /// Creates a report, stored in the GlobalInvestigationReport and InvestigationMeta tables.
 ClassMethod CreateReport(GrowthPercentageWarning As %Decimal, PeriodWarning As %Integer, HistoryLength As %Integer) As %Status
@@ -17,8 +19,8 @@ ClassMethod CreateReport(GrowthPercentageWarning As %Decimal, PeriodWarning As %
 	set allowedGrowthPerDay = GrowthPercentageWarning/PeriodWarning
 
 	&sql(INSERT INTO Sample_DBExpansion_Data.InvestigationMeta
-		(GrowthPercentageWarning, HistoryLength, PeriodWarning)
-	   	VALUES(:GrowthPercentageWarning, :HistoryLength, :PeriodWarning))
+	    (GrowthPercentageWarning, HistoryLength, PeriodWarning)
+	    VALUES(:GrowthPercentageWarning, :HistoryLength, :PeriodWarning))
 	
 	if (SQLCODE '=0)
 	{
@@ -27,16 +29,10 @@ ClassMethod CreateReport(GrowthPercentageWarning As %Decimal, PeriodWarning As %
 	}
 	set rowID = %ROWID
 	
-	///////do not need to add date to this query... we are not collecting data apart from names. it will only slow it down here and we will check for dates later
-	#; set query = "SELECT GB.GlobalName, GB.ClassName, GB.AllocatedMB, GB.UsedMB, DB.TIMESTAMPEND, DB.FastFlag "_
-	#; 			"FROM Sample_DBExpansion_Data.GlobalAnalysisInfo AS GB "_ 
-	#; 			"INNER JOIN Sample_DBExpansion_Data.DBAnalysisInfo AS DB ON DB.ID = GB.MetaData "_
-	#; 			"WHERE DATEDIFF('dd', DB.TimeStampEnd, GETDATE()) <= ? "_
-	#; 			"ORDER BY GLOBALNAME" ///add time stamp to query: ORDER BY GLOBALNAME ASC , DB.TimeStampEnd ASC
 	set query = "SELECT GlobalName, ClassName, AllocatedMB, UsedMB, MetaData->TimeStampEnd, MetaData->FastFlag "_ 
-				"FROM Sample_DBExpansion_Data.GlobalAnalysisInfo "_
-				"WHERE DATEDIFF('dd', MetaData->TimeStampEnd, GETDATE()) <= ? "_
-				"ORDER BY GLOBALNAME ASC , MetaData->TimeStampEnd ASC"
+		    "FROM Sample_DBExpansion_Data.GlobalAnalysisInfo "_
+		    "WHERE DATEDIFF('dd', MetaData->TimeStampEnd, GETDATE()) <= ? "_
+	            "ORDER BY GLOBALNAME ASC , MetaData->TimeStampEnd ASC"
 	
 	set statement = ##class(%SQL.Statement).%New()
 	set status = statement.%Prepare(query)
@@ -70,6 +66,8 @@ ClassMethod CreateReport(GrowthPercentageWarning As %Decimal, PeriodWarning As %
 	set DecreaseAlloc = 0
 	set DecreaseUsed = 0
 	
+	
+
 
 	while resultSet.%Next(){ ///note that they will already be ordered by date as well within global as their table insertion is chronological
 		
@@ -100,20 +98,17 @@ ClassMethod CreateReport(GrowthPercentageWarning As %Decimal, PeriodWarning As %
 		//// MOVING ON TO NEXT GLOBAL... NEED TO DO ALL COMPARISONS AND FINALIZE ANALYSIS.... attempted to put this in a method but i think it makes the code more difficult to understand (more overhead = 11 parameters... + some processing beforehand) so i kept it like this
 		//// firstMeasurement = 0 conditon to make sure first ever iteration not caught in here as no prev global to compare to (set to -1)
 		////----------------------------------------------------------------------------------------------------///////////////////////
-		////// got to here with tani.... finished loop but need to check final condition here.
 		if ((prevGlobalName '= currGlobalName) && (firstMeasurement =0)) { ///note this is not caps sensitive.... gets messed up when two globals with same spelling but some caps some not... cause SQL recognize as same
 			set lastDate = prevDate
 			set lastMeasurementUsed = prevUsedSize
 			set lastMeasurementAllocated = prevAllocatedSize
-			#; &sql(SELECT DATEDIFF('dd',:firstDate,:lastDate) INTO :histLengthGlobal)		 ///need to do error checking for this?
 			set histLengthGlobal = ##class(%SYSTEM.SQL.Functions).DATEDIFF("dd", firstDate, lastDate)
 		
 			
 			set historicGrowthUsed = lastMeasurementUsed - firstMeasurementUsed
 			set historicGrowthAllocated = lastMeasurementAllocated - firstMeasurementAllocated
 
-			#; write !, "last measurement and first measurement for global "_prevGlobalName_ " last: "_lastMeasurementUsed_" first: "_firstMeasurementUsed_" hist growth used: "_historicGrowthUsed
-
+		
 			////----------------------------------------------------------------------------------------------------///////////////////////
 			//// if fastFlagOn for any measurement of a global then it's analysis will be done on allocated exclusively
 			////----------------------------------------------------------------------------------------------------///////////////////////
@@ -200,7 +195,6 @@ ClassMethod CreateReport(GrowthPercentageWarning As %Decimal, PeriodWarning As %
 					set DecreaseUsed = 1
 				}
 				
-				#; &sql(SELECT DATEDIFF('dd',:prevDate,:currDate) INTO :currDaysPassed) ///need to do error checking for this?
 				set currDaysPassed = ##class(%SYSTEM.SQL.Functions).DATEDIFF("dd", prevDate, currDate)
 		
 
@@ -221,7 +215,6 @@ ClassMethod CreateReport(GrowthPercentageWarning As %Decimal, PeriodWarning As %
 				if (currGrowthNormPercentUsed > maxGrowthNormPercentUsed)
 				{
 					set maxGrowthNormPercentUsed = currGrowthNormPercentUsed 
-					#; set maxGrowthMBUsed = growthMBFromLastMeasurementUsed
 				}			
 				if (growthMBFromLastMeasurementUsed > maxGrowthMBUsed){
 					set maxGrowthMBUsed = growthMBFromLastMeasurementUsed
@@ -236,7 +229,6 @@ ClassMethod CreateReport(GrowthPercentageWarning As %Decimal, PeriodWarning As %
 				if (currGrowthNormPercentAlloc > maxGrowthNormPercentAlloc)
 				{
 					set maxGrowthNormPercentAlloc = currGrowthNormPercentAlloc
-					#; set maxGrowthMBAlloc = growthMBFromLastMeasurementAllocated
 				}
 			
 			}
@@ -246,47 +238,46 @@ ClassMethod CreateReport(GrowthPercentageWarning As %Decimal, PeriodWarning As %
 		////----------------------------------------------------------------------------------------------------///////////////////////
 		//// NEED TO DO ANALYSIS FOR FINAL GLOBAL AS IT WILL NOT BE DONE IN THE WHILE LOOP AS THERE IS NO NEXT GLOBAL
 		////----------------------------------------------------------------------------------------------------///////////////////////
-			set lastDate = prevDate 
-			set lastMeasurementUsed = prevUsedSize
-			set lastMeasurementAllocated = prevAllocatedSize
+	set lastDate = prevDate 
+	set lastMeasurementUsed = prevUsedSize
+	set lastMeasurementAllocated = prevAllocatedSize
 			
-			#; &sql(SELECT DATEDIFF('dd',:firstDate,:lastDate) INTO :histLengthGlobal)	///need to do error checking for this?	
-			set histLengthGlobal = ##class(%SYSTEM.SQL.Functions).DATEDIFF("dd", firstDate, lastDate)
+	set histLengthGlobal = ##class(%SYSTEM.SQL.Functions).DATEDIFF("dd", firstDate, lastDate)
 			
-			set historicGrowthUsed = lastMeasurementUsed - firstMeasurementUsed
-			set historicGrowthAllocated = lastMeasurementAllocated - firstMeasurementAllocated
+	set historicGrowthUsed = lastMeasurementUsed - firstMeasurementUsed
+	set historicGrowthAllocated = lastMeasurementAllocated - firstMeasurementAllocated
 
-			if (fastFlagAll = 0){
-				set historicGrowth = historicGrowthUsed
-				set maxGrowthRequestedPeriod = maxGrowthNormPercentUsed * 100
-				set maxGrowthMB = maxGrowthMBUsed
-				set Decrease = DecreaseUsed
-			}
+	if (fastFlagAll = 0){
+		set historicGrowth = historicGrowthUsed
+		set maxGrowthRequestedPeriod = maxGrowthNormPercentUsed * 100
+		set maxGrowthMB = maxGrowthMBUsed
+		set Decrease = DecreaseUsed
+	}
 
-			else{ ///ran in fast, get alloc
-				
-				set historicGrowth = historicGrowthAllocated //amount grown
-				set maxGrowthRequestedPeriod = maxGrowthNormPercentAlloc * 100
-				write !, "max growth normalizedfor "_prevGlobalName_"is : "_maxGrowthRequestedPeriod
-				set maxGrowthMB = maxGrowthMBAlloc
-				set Decrease = DecreaseAlloc
-			}
-			set historicGrowthPerDay = historicGrowth/histLengthGlobal
+	else{ ///ran in fast, get alloc
+		
+		set historicGrowth = historicGrowthAllocated //amount grown
+		set maxGrowthRequestedPeriod = maxGrowthNormPercentAlloc * 100
+		set maxGrowthMB = maxGrowthMBAlloc
+		set Decrease = DecreaseAlloc
+	}
 
-			set growthForRequestedPeriod = historicGrowthPerDay * PeriodWarning
+	set historicGrowthPerDay = historicGrowth/histLengthGlobal
+	set growthForRequestedPeriod = historicGrowthPerDay * PeriodWarning
 
-			if (maxGrowthRequestedPeriod > GrowthPercentageWarning){
-				set OverGrew = 1
-			}
+	if (maxGrowthRequestedPeriod > GrowthPercentageWarning){
+		set OverGrew = 1
+	}
 							
 			
-			&sql(Insert into Sample_DBExpansion_Data.GlobalInvestigationReport(ClassName, GlobalName, HistoricGrowthPerDay, MaxGrowthNormalized, MaxGrowthMB, OverGrew, AmountGrown, Decrease, FastFlagAll, GrowthForRequestedPeriod, ReportNum)
-	   	 	VALUES (:prevClassName, :prevGlobalName, :historicGrowthPerDay, :maxGrowthRequestedPeriod, :maxGrowthMB, :OverGrew, :historicGrowth, :Decrease, :fastFlagAll, :growthForRequestedPeriod, :rowID))
-			if (SQLCODE '=0)
-			{
-				set status = $$$ERROR($$$GeneralError, "DB Insert Failed, sqlcode: "_SQLCODE_" Message: "_$GET(%msg))
-				return status
-			}		
+	&sql(Insert into Sample_DBExpansion_Data.GlobalInvestigationReport(ClassName, GlobalName, HistoricGrowthPerDay, MaxGrowthNormalized, MaxGrowthMB, OverGrew, AmountGrown, Decrease, FastFlagAll, GrowthForRequestedPeriod, ReportNum)
+             VALUES (:prevClassName, :prevGlobalName, :historicGrowthPerDay, :maxGrowthRequestedPeriod, :maxGrowthMB, :OverGrew, :historicGrowth, :Decrease, :fastFlagAll, :growthForRequestedPeriod, :rowID))
+	
+	if (SQLCODE '=0)
+	{
+		set status = $$$ERROR($$$GeneralError, "DB Insert Failed, sqlcode: "_SQLCODE_" Message: "_$GET(%msg))
+		return status
+	}		
 			
 			
 
@@ -295,6 +286,7 @@ ClassMethod CreateReport(GrowthPercentageWarning As %Decimal, PeriodWarning As %
 	FROM Sample_DBExpansion_Data.GlobalInvestigationReport 
 	WHERE ReportNum = :rowID
 	)
+
 	if (SQLCODE '=0)
 	{
 		set status = $$$ERROR($$$GeneralError, "Select Sum Failed, sqlcode: "_SQLCODE_" Message: "_$GET(%msg))
@@ -338,4 +330,6 @@ ClassMethod CreateReport(GrowthPercentageWarning As %Decimal, PeriodWarning As %
 	}
 	
 	return $$$OK
+}
+
 }
