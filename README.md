@@ -2,6 +2,8 @@
 
 This is the sequel to [Data Collection](https://github.com/Ari-Glikman/DataCollection/blob/main/README.md#data-collection). If you have not had a chance to go through and install that you should first do that.
 
+**If you already have installed that code, note that there has been updates to make it more efficient. Please download the latest [version](https://github.com/Ari-Glikman/DataCollection/blob/main/README.md#data-collection), uploaded August 23**
+
 What is provided here is the analysis for the collection of that data that was collected earlier.
 
 In much the same way as was done in that repository you will need to import the xml that makes up this repository. 
