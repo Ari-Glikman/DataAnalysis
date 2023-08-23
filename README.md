@@ -2,7 +2,10 @@
 
 This is the sequel to [Data Collection](https://github.com/Ari-Glikman/DataCollection/blob/main/README.md#data-collection). If you have not had a chance to go through and install that you should first do that.
 
+**Note that all code can be downloaded from the [importable]() folder, regardless of whether you are seeking both the data collection and data analysis or just the latter.**
+
 **If you already have installed that code, note that there has been updates to make it more efficient. Please download the latest [version2](https://github.com/Ari-Glikman/DataCollection/blob/main/README.md#data-collection), uploaded August 23**
+
 
 What is provided here is the analysis for the collection of that data that was collected earlier.
 
