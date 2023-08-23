@@ -1,0 +1,2235 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="Cache" version="25" zv="IRIS for Windows (x86-64) 2022.3 (Build 606U)" ts="2023-08-23 10:53:55">
+<Class name="Sample.DBExpansion.DBSizeAnalysis.CaptureInfo">
+<Super>%RegisteredObject</Super>
+<TimeChanged>66660,48031.9374556</TimeChanged>
+<TimeCreated>66584,32814.956927</TimeCreated>
+
+<Method name="PopulateDBTable">
+<Description><![CDATA[
+pass by reference an address for the function to return a value to, will be used by the <Method>RetrieveData()</Method>
+the parameter passed by reference will be filled with the ID of the newly inserted DB statistics
+this ID will be the MetaData of the globals inserted into the globals table in <Method>PopulateGlobalTable</Method>, and hence the MetaID parameter passed as in <Method>RetrieveData()</Method>
+<br>
+<br>
+updates the <CLASS> Sample.DBExpansion.Data.DBAnalysisInfo </CLASS> class / <method> Sample_DBExpansion_Data.DBAnalysisInfo </method> table]]></Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec><![CDATA[&rowID:%Integer]]></FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+		/// take the newest time
+		&sql(Select TOP 1 TimeStampEnd Into :timeStampEnd From Sample_DBExpansion_Data.DBAnalysisInfo ORDER BY TimeStampEnd DESC)
+		if (SQLCODE < 0) //0 or 100 is okay here since there may be no data in table
+	     	{
+		 		set status = $$$ERROR($$$GeneralError, "TimeRetrieval Failed")    
+		 		return $$$ADDSC(status,SQLCODE)
+		 	}
+		set newAmountMsgs = ##class(Sample.DBExpansion.Util.Helper).getNewMessageNum(timeStampEnd)
+		set stampStart = $ZDATETIME($HOROLOG,3)
+		
+		set DBstatement=##class(%SQL.Statement).%New()
+	    set DBstatus=DBstatement.%PrepareClassQuery("%SYS.DatabaseQuery", "FreeSpace")
+	    
+	    do ##class(%SYS.Namespace).GetNSInfo($NAMESPACE, .dbinfo)
+	    set directory = dbinfo("Directory")
+	    #dim DBresultset As %SQL.StatementResult
+		set DBresultset=DBstatement.%Execute($lb(directory)) 
+		
+		
+		if (DBresultset.%SQLCODE '=0) ///output error
+		{
+			set status = $$$ERROR($$$GeneralError,"%Execute failed")
+			return $$$ADDSC(status,SQLCODE)
+		}
+		
+		while DBresultset.%Next(){//for each database if * is enabled above
+		
+			set allocatedSize = DBresultset.%Get("Size")
+			set unusedSpace = DBresultset.%Get("Available")
+			// check units... convert everything to MB for now (GB->MB)
+			if ($FIND(allocatedSize, "GB") > 0) 
+			{
+				set allocatedSize = allocatedSize*1000 //i think this should be 1024 but it matches the sql results with 1000
+			}
+			if ($FIND(unusedSpace, "GB") > 0)
+			{
+				set unusedSpace = unusedSpace*1000
+			}
+		
+			set usedSize = allocatedSize-unusedSpace
+		
+		
+		
+		&sql(INSERT INTO Sample_DBExpansion_Data.DBAnalysisInfo 
+			(DatabaseName, DBAllocatedSize, DBUsedSize, TimeStampStart, NewMessagesCountSinceLastRun)
+	     	VALUES(:directory, :allocatedSize, :usedSize, :stampStart, :newAmountMsgs))
+	     
+	     if (SQLCODE '=0)
+	     {
+		 	set status = $$$ERROR($$$GeneralError, "DB Insert Failed")    
+		 	return $$$ADDSC(status,SQLCODE)
+		 }
+	     
+	}
+	set rowID = %ROWID
+	return $$$OK
+]]></Implementation>
+</Method>
+
+<Method name="PopulateGlobalTable">
+<Description><![CDATA[
+pass as parameters the metaID of globals that will be added to table (one more than previously exisitng, or 1 if no globals in table), as well as whether to run in 'fast' mode (=1) (no usedMB) or 'slow' mode (=0) (get usedMB)
+<br>
+<br>
+called by <method>RetrieveData()</method>
+<br>
+<br>
+updates the <CLASS> Sample.DBExpansion.Data.GlobalAnalysisInfo </CLASS> class / <method> Sample_DBExpansion_Data.GlobalAnalysisInfo </method> table
+<br>
+returns status as error or $$$OK]]></Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>MetaID:%Integer,Fast:%Boolean=0</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+		 set globalCount = 0
+		do ##class(%SYS.Namespace).GetNSInfo($NAMESPACE, .dbinfo)
+	    set directory = dbinfo("Directory")
+	    
+		set statement=##class(%SQL.Statement).%New()
+   		set status=statement.%PrepareClassQuery("%SYS.GlobalQuery","Size")
+    	set resultset=statement.%Execute(directory,,,,,Fast) 
+    	
+    	if (resultset.%SQLCODE '=0) ///output error
+		{
+			set status = $$$ERROR($$$GeneralError,"%Execute failed")
+			return $$$ADDSC(status,SQLCODE)
+		}
+    
+    	//note that globals with same name will appear multiple times in table, hence the timestamp to differentiate and for comparison in task2
+       	while resultset.%Next() { //iterate thru globals, insert into table
+			
+			set globalCount = globalCount+1
+			set globalName = resultset.%Get("Name")
+		    set allocMB = resultset.%Get("Allocated MB")	    
+		    set usedMB = resultset.%Get("Used MB")    
+			set className = "" //don't want to rewrite classname that was previously written if no classname found, wipe variable
+
+			#dim %sqlcontext As %SQLProcContext 
+			set %sqlcontext = ""
+			do ##class(%ExtentMgr.Util).GlobalUses("^"_globalName)	
+			if (%sqlcontext.%Next())
+			{
+				set className = %sqlcontext.%Get("UsedByExtent")
+			}
+      		//// get class name ^^^ 	
+	    	&sql(Insert into Sample_DBExpansion_Data.GlobalAnalysisInfo(ClassName, GlobalName, AllocatedMB, UsedMB, MetaData)
+	    	 VALUES (:className, :globalName, :allocMB, :usedMB, :MetaID))
+   	     	if (SQLCODE '=0)
+	     	{
+		 		set status = $$$ERROR($$$GeneralError, "Global Insert Failed for global: "_globalName)    
+		 		return $$$ADDSC(status,SQLCODE)
+		 	}
+		}
+		
+		set dbNewestEntry = ##class(Sample.DBExpansion.Data.DBAnalysisInfo).%OpenId(MetaID)
+		set dbNewestEntry.NumOfGlobals = globalCount
+		set dbNewestEntry.FastFlag = Fast
+		set dbNewestEntry.TimeStampEnd = $ZDATETIME($HOROLOG,3) 
+		set saveStatus = dbNewestEntry.%Save()
+		if $$$ISERR(saveStatus)
+			{
+				set status = $$$ERROR($$$GeneralError, "GlobalCount Save Failed")
+				return $$$ADDSC(status,saveStatus)
+			}
+		return $$$OK
+]]></Implementation>
+</Method>
+
+<Method name="RetrieveData">
+<Description>
+parameter: whether to run in 'fast' mode (=1) (no usedMB) or 'slow' mode (=0) (get usedMB)
+note that fast mode will return 0s in the usedMB field</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>Fast:%Boolean</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+		set st = ..PopulateDBTable(.currID)
+		if $$$ISOK(st)
+		{
+			set st = ..PopulateGlobalTable(currID,Fast)
+		}
+		return st
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo">
+<Description>
+**********************************************************
+*                   ** N O T I C E **                    *
+*                - TEST/DEMO SOFTWARE -                  *
+* This code is not supported by InterSystems as part     *
+* of any released product.  It is supplied by            *
+* InterSystems as a demo/test tool for a specific        *
+* product and version. The user or customer is fully     *
+* responsible for the maintenance and testing of this    *
+* software after delivery, and InterSystems shall bear   *
+* no responsibility nor liabilities for errors or misuse *
+* of this code.                                          *
+**********************************************************</Description>
+<Super>%RegisteredObject</Super>
+<TimeChanged>66709,37020.7757736</TimeChanged>
+<TimeCreated>66584,33039.571867</TimeCreated>
+
+<Method name="CreateReport">
+<Description>
+Creates a report, stored in the GlobalInvestigationReport and InvestigationMeta tables.</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>GrowthPercentageWarning:%Decimal,PeriodWarning:%Integer,HistoryLength:%Integer</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	set allowedGrowthPerDay = GrowthPercentageWarning/PeriodWarning
+
+	&sql(INSERT INTO Sample_DBExpansion_Data.InvestigationMeta
+		(GrowthPercentageWarning, HistoryLength, PeriodWarning)
+	   	VALUES(:GrowthPercentageWarning, :HistoryLength, :PeriodWarning))
+	
+	if (SQLCODE '=0)
+	{
+		set status = $$$ERROR($$$GeneralError, "DB Insert Failed, sqlcode: "_SQLCODE_" Message: "_$GET(%msg))
+		return status
+	}
+	set rowID = %ROWID
+	
+	set query = "SELECT GlobalName, ClassName, AllocatedMB, UsedMB, MetaData->TimeStampEnd, MetaData->FastFlag "_ 
+				"FROM Sample_DBExpansion_Data.GlobalAnalysisInfo "_
+				"WHERE DATEDIFF('dd', MetaData->TimeStampEnd, GETDATE()) <= ? "_
+				"ORDER BY GLOBALNAME ASC , MetaData->TimeStampEnd ASC"
+	
+	set statement = ##class(%SQL.Statement).%New()
+	set status = statement.%Prepare(query)
+	set resultSet = statement.%Execute(HistoryLength) //check for sql today.
+
+	if (resultSet.%SQLCODE '=0) ///output error
+	{
+		set status = $$$ERROR($$$GeneralError, "%Execute failed, sqlcode: "_SQLCODE_" Message: "_$GET(%msg))
+		return status
+	}
+	
+	////----------------------------------------------------------------------------------------------------///////////////////////
+	//// INITIALIZE VARIABLES 
+	////----------------------------------------------------------------------------------------------------///////////////////////
+	set currGlobalName = -1
+	set currClassName = -1
+	set currAllocatedSize = -1
+	set currUsedSize = -1
+	set currDate = -1 
+	set firstDate = -1
+	set currFastFlag = -1
+	set firstMeasurement = 1 //first measurement of each global
+	set maxGrowthNormPercentUsed = 0
+	set maxGrowthMBUsed = 0
+	set maxGrowthNormPercentAlloc = 0
+	set maxGrowthMBAlloc = 0
+	set fastFlagAll = 0
+	///these do not need to be initialized but done so to avoid the squiggly yellow lines...
+	set firstMeasurementUsed = -1
+	set firstMeasurementAllocated = -1
+	set DecreaseAlloc = 0
+	set DecreaseUsed = 0
+	
+	
+
+
+	while resultSet.%Next(){ ///note that they will already be ordered by date as well within global as their table insertion is chronological
+		
+
+		////----------------------------------------------------------------------------------------------------///////////////////////
+		//// SET PREVIOUS Vars
+		////----------------------------------------------------------------------------------------------------///////////////////////
+		set prevGlobalName = currGlobalName
+		set prevClassName = currClassName
+		set prevDate = currDate
+		set prevUsedSize = currUsedSize
+		set prevAllocatedSize = currAllocatedSize
+		set prevFastFlag = currFastFlag
+
+		////----------------------------------------------------------------------------------------------------///////////////////////
+		//// GET NEW Vars
+		////----------------------------------------------------------------------------------------------------///////////////////////
+		set currGlobalName = resultSet.%Get("GlobalName")
+		set currClassName = resultSet.%Get("ClassName")
+		set currDate = resultSet.%Get("TimeStampEnd")
+		set currUsedSize = resultSet.%Get("UsedMB")
+		set currAllocatedSize = resultSet.%Get("AllocatedMB")
+		set currFastFlag = resultSet.%Get("FastFlag")
+
+
+
+		////----------------------------------------------------------------------------------------------------///////////////////////
+		//// MOVING ON TO NEXT GLOBAL... NEED TO DO ALL COMPARISONS AND FINALIZE ANALYSIS.... attempted to put this in a method but i think it makes the code more difficult to understand (more overhead = 11 parameters... + some processing beforehand) so i kept it like this
+		//// firstMeasurement = 0 conditon to make sure first ever iteration not caught in here as no prev global to compare to (set to -1)
+		////----------------------------------------------------------------------------------------------------///////////////////////
+		if ((prevGlobalName '= currGlobalName) && (firstMeasurement =0)) { ///note this is not caps sensitive.... gets messed up when two globals with same spelling but some caps some not... cause SQL recognize as same
+			set lastDate = prevDate
+			set lastMeasurementUsed = prevUsedSize
+			set lastMeasurementAllocated = prevAllocatedSize
+			set histLengthGlobal = ##class(%SYSTEM.SQL.Functions).DATEDIFF("dd", firstDate, lastDate)
+		
+			
+			set historicGrowthUsed = lastMeasurementUsed - firstMeasurementUsed
+			set historicGrowthAllocated = lastMeasurementAllocated - firstMeasurementAllocated
+
+		
+			////----------------------------------------------------------------------------------------------------///////////////////////
+			//// if fastFlagOn for any measurement of a global then it's analysis will be done on allocated exclusively
+			////----------------------------------------------------------------------------------------------------///////////////////////
+			if (fastFlagAll = 0){
+
+				set historicGrowth = historicGrowthUsed
+				set maxGrowthRequestedPeriod = maxGrowthNormPercentUsed * 100
+				set maxGrowthMB = maxGrowthMBUsed
+	
+				set Decrease = DecreaseUsed
+			}
+			else{ ///ran in fast, get alloc
+				
+				set historicGrowth = historicGrowthAllocated 
+				set maxGrowthRequestedPeriod = maxGrowthNormPercentAlloc * 100
+				set maxGrowthMB = maxGrowthMBAlloc
+				
+				set Decrease = DecreaseAlloc
+			}
+		
+			if (histLengthGlobal = 0) 
+			{
+				set histLengthGlobal = 1	
+			}
+			set historicGrowthPerDay = historicGrowth/histLengthGlobal
+
+			set growthForRequestedPeriod = historicGrowthPerDay * PeriodWarning
+
+			if (maxGrowthRequestedPeriod > GrowthPercentageWarning){
+				set OverGrew = 1
+			}
+					
+			////----------------------------------------------------------------------------------------------------///////////////////////
+			//// COLS / VARS ARE DEFINED AS FOLLOWS 
+			//// COL NAME: HistoricGrowthPerDay / VAR NAME: historicGrowthPerDay - defined as total growth over requested history, divided by days passed between last and first measurement. Units: MB/DAY  
+			//// COL NAME: MaxGrowthNormalized / VAR NAME: maxGrowthRequestedPeriod - the greatest NORMALIZED PERCENTAGE growth / day  between any two measurements within the history. This means that you take the max growth per day and mutliply by PeriodWarning to make the numbers easily comparable to the user  Units: Normalized %
+			////                                       Example of MaxGrowth: if the max growth was determined to be 5% per day over 7 days and the user requested to see a growth of 10% in 10 days then this column will display 5%/day * 10 days = 50% 
+			//// COL NAME: MaxGrowthMB / VAR NAME: maxGrowthMB - maximum amount of growth between two measurements (in MB). note that this is independent of time passed unlike the normalized max above. Units: MB
+			//// COL NAME: OverGrew / VAR NAME: OverGrew - boolean as to whether the MAXGROWTH (%/DAY) surpassed the allowed growth (converted to a %/DAY equivalence). Units: True/False
+			//// COL NAME: AmountGrown / VAR NAME: historicGrowth - the growth from first to last measurement. Units - MB
+			//// COL NAME: Decrease / VAR NAME: Decrease - boolean as to whether there was ever a decrease in size between two continual measurements. Units: 1/0
+			//// COL NAME: FastFlagAll / VAR NAME: fastFlagAll - boolean that demonstrates if any single measurement for a global was taken in 'fast' mode, meaning that all UsedMB measurements are ignored and only Allocated space will be considered. Units: 1/0
+			//// COL NAME: GrowthForRequestedPeriod / VAR NAME: growthForRequestedPeriod - taken as historicGrowthPerDay * PeriodWarning this shows how much MB this would have grown in the requested period had it grown at this rate for that period. to make the numbers more digestible. Units: NORMALIZED MB 
+			//// COL NAME: ReportNum / VAR NAME: rowID - corresponds to the ID of the row in the 'Meta' table (Sample_DBExpansion_Data.InvestigationMeta)
+			////----------------------------------------------------------------------------------------------------///////////////////////
+			
+			&sql(Insert into Sample_DBExpansion_Data.GlobalInvestigationReport(ClassName, GlobalName, HistoricGrowthPerDay, MaxGrowthNormalized, MaxGrowthMB, OverGrew, AmountGrown, Decrease, FastFlagAll, GrowthForRequestedPeriod, ReportNum)
+	   	 	VALUES (:prevClassName, :prevGlobalName, :historicGrowthPerDay, :maxGrowthRequestedPeriod, :maxGrowthMB,:OverGrew, :historicGrowth, :Decrease, :fastFlagAll, :growthForRequestedPeriod, :rowID))
+			if (SQLCODE '=0)
+			{
+				set status = $$$ERROR($$$GeneralError, "DB Insert Failed, sqlcode: "_SQLCODE_" Message: "_$GET(%msg))
+				return status
+			}		
+			
+			/// reset firstMeasurement as changing to next global
+			set firstMeasurement = 1 
+		}
+		////----------------------------------------------------------------------------------------------------///////////////////////
+		//// RESET ALL STATS
+		////----------------------------------------------------------------------------------------------------///////////////////////
+		if (firstMeasurement = 1)
+			{
+				set OverGrew = 0
+				set DecreaseAlloc = 0
+				set DecreaseUsed = 0
+				set maxGrowthNormPercentUsed = 0
+				set maxGrowthNormPercentAlloc = 0
+				set maxGrowthMBUsed = 0
+				set maxGrowthMBAlloc = 0
+				set fastFlagAll = currFastFlag
+			
+				set firstMeasurementUsed = currUsedSize
+				set firstMeasurementAllocated = currAllocatedSize
+				set firstDate = currDate
+				set firstMeasurement = 0
+				
+				
+			}
+			else ///COMPARE IN HERE... NOT FIRST MEASUREMENT BUT STILL WITHIN SAME GLOBAL
+			{
+				set growthMBFromLastMeasurementUsed = currUsedSize - prevUsedSize
+				set growthMBFromLastMeasurementAllocated = currAllocatedSize - prevAllocatedSize
+				
+				if (growthMBFromLastMeasurementAllocated < 0){
+					set DecreaseAlloc = 1
+				}
+				if (growthMBFromLastMeasurementUsed < 0){
+					set DecreaseUsed = 1
+				}
+				
+				set currDaysPassed = ##class(%SYSTEM.SQL.Functions).DATEDIFF("dd", prevDate, currDate)
+		
+
+				/// to avoid divide by 0 error
+				if (currDaysPassed=0){
+					set currDaysPassed = 1
+				}
+				if (prevUsedSize = 0){
+					set prevUsedSize = 0.001
+				}
+				if (prevAllocatedSize = 0){
+					set prevAllocatedSize = 0.001
+				}
+
+				//// ( percentage growth / day ) * Period Warning = Normalized %. If user requests 10% in 10 days then we can show what the equivalent growth in 10 days would have been as a %
+				set currGrowthNormPercentUsed = ((growthMBFromLastMeasurementUsed / prevUsedSize) / currDaysPassed) * PeriodWarning
+				set currGrowthNormPercentAlloc = ((growthMBFromLastMeasurementAllocated / prevAllocatedSize) / currDaysPassed) * PeriodWarning
+
+
+
+				if (currGrowthNormPercentUsed > maxGrowthNormPercentUsed)
+				{
+					set maxGrowthNormPercentUsed = currGrowthNormPercentUsed 
+				}			
+				if (growthMBFromLastMeasurementUsed > maxGrowthMBUsed){
+					set maxGrowthMBUsed = growthMBFromLastMeasurementUsed
+				}
+				
+				if (growthMBFromLastMeasurementAllocated > maxGrowthMBAlloc)
+				{
+					set maxGrowthMBAlloc = growthMBFromLastMeasurementAllocated
+				}
+				if (currGrowthNormPercentAlloc > maxGrowthNormPercentAlloc)
+				{
+					set maxGrowthNormPercentAlloc = currGrowthNormPercentAlloc
+				}
+			
+			}
+	} /// end while loop
+		
+		
+		////----------------------------------------------------------------------------------------------------///////////////////////
+		//// NEED TO DO ANALYSIS FOR FINAL GLOBAL AS IT WILL NOT BE DONE IN THE WHILE LOOP AS THERE IS NO NEXT GLOBAL
+		////----------------------------------------------------------------------------------------------------///////////////////////
+			set lastDate = prevDate 
+			set lastMeasurementUsed = prevUsedSize
+			set lastMeasurementAllocated = prevAllocatedSize
+			
+			set histLengthGlobal = ##class(%SYSTEM.SQL.Functions).DATEDIFF("dd", firstDate, lastDate)
+			
+			set historicGrowthUsed = lastMeasurementUsed - firstMeasurementUsed
+			set historicGrowthAllocated = lastMeasurementAllocated - firstMeasurementAllocated
+
+			if (fastFlagAll = 0){
+				set historicGrowth = historicGrowthUsed
+				set maxGrowthRequestedPeriod = maxGrowthNormPercentUsed * 100
+				set maxGrowthMB = maxGrowthMBUsed
+				set Decrease = DecreaseUsed
+			}
+
+			else{ ///ran in fast, get alloc
+				
+				set historicGrowth = historicGrowthAllocated //amount grown
+				set maxGrowthRequestedPeriod = maxGrowthNormPercentAlloc * 100
+				set maxGrowthMB = maxGrowthMBAlloc
+				set Decrease = DecreaseAlloc
+			}
+			if (histLengthGlobal = 0) 
+			{
+				set histLengthGlobal = 1	
+			}
+			set historicGrowthPerDay = historicGrowth/histLengthGlobal
+
+			set growthForRequestedPeriod = historicGrowthPerDay * PeriodWarning
+
+			if (maxGrowthRequestedPeriod > GrowthPercentageWarning){
+				set OverGrew = 1
+			}
+							
+			
+			&sql(Insert into Sample_DBExpansion_Data.GlobalInvestigationReport(ClassName, GlobalName, HistoricGrowthPerDay, MaxGrowthNormalized, MaxGrowthMB, OverGrew, AmountGrown, Decrease, FastFlagAll, GrowthForRequestedPeriod, ReportNum)
+	   	 	VALUES (:prevClassName, :prevGlobalName, :historicGrowthPerDay, :maxGrowthRequestedPeriod, :maxGrowthMB, :OverGrew, :historicGrowth, :Decrease, :fastFlagAll, :growthForRequestedPeriod, :rowID))
+			if (SQLCODE '=0)
+			{
+				set status = $$$ERROR($$$GeneralError, "DB Insert Failed, sqlcode: "_SQLCODE_" Message: "_$GET(%msg))
+				return status
+			}		
+			
+			
+
+	&sql(
+	SELECT SUM(OverGrew) INTO :numGlobalsOverGrew
+	FROM Sample_DBExpansion_Data.GlobalInvestigationReport 
+	WHERE ReportNum = :rowID
+	)
+	if (SQLCODE '=0)
+	{
+		set status = $$$ERROR($$$GeneralError, "Select Sum Failed, sqlcode: "_SQLCODE_" Message: "_$GET(%msg))
+		return status
+	}
+	&sql(
+	SELECT TOP 1 GlobalName 
+	INTO :biggestGrowerGlobal 
+	FROM Sample_DBExpansion_Data.GlobalInvestigationReport 
+	ORDER BY AmountGrown DESC  
+	)
+	if (SQLCODE '=0)
+	{
+		set status = $$$ERROR($$$GeneralError, "Select Failed, sqlcode: "_SQLCODE_" Message: "_$GET(%msg))
+		return status
+	}
+
+	&sql(
+		SELECT COUNT(*) INTO :NumberOfMeasurementsInspected 
+		FROM Sample_DBExpansion_Data.GlobalAnalysisInfo
+		WHERE GlobalName = :biggestGrowerGlobal
+	)
+	if (SQLCODE '=0)
+	{
+		set status = $$$ERROR($$$GeneralError, "Select Count(*) Failed, sqlcode: "_SQLCODE_" Message: "_$GET(%msg))
+		return status
+	}
+
+	&sql(
+	Update Sample_DBExpansion_Data.InvestigationMeta
+	SET NumGlobalsOvergrown = :numGlobalsOverGrew, 
+	BiggestGrower = :biggestGrowerGlobal,
+	NumberOfMeasurementsInspected = :NumberOfMeasurementsInspected,
+	TimeStamp = GETDATE()
+	WHERE %ID = :rowID
+	)
+	if (SQLCODE '=0)
+	{
+		set status = $$$ERROR($$$GeneralError, "Update Failed, sqlcode: "_SQLCODE_" Message: "_$GET(%msg))
+		return status
+	}
+	
+	return $$$OK
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Data.DBAnalysisInfo">
+<Description>
+**********************************************************
+*                   ** N O T I C E **                    *
+*                - TEST/DEMO SOFTWARE -                  *
+* This code is not supported by InterSystems as part     *
+* of any released product.  It is supplied by            *
+* InterSystems as a demo/test tool for a specific        *
+* product and version. The user or customer is fully     *
+* responsible for the maintenance and testing of this    *
+* software after delivery, and InterSystems shall bear   *
+* no responsibility nor liabilities for errors or misuse *
+* of this code.                                          *
+**********************************************************
+this is the table that will store history of statistics for the desired database</Description>
+<Super>%Persistent</Super>
+<TimeChanged>66709,38616.9505665</TimeChanged>
+<TimeCreated>66584,32659.2919584</TimeCreated>
+
+<Property name="DatabaseName">
+<Type>%String</Type>
+<Parameter name="MAXLEN" value="200"/>
+</Property>
+
+<Property name="TimeStampStart">
+<Type>%TimeStamp</Type>
+</Property>
+
+<Property name="TimeStampEnd">
+<Type>%TimeStamp</Type>
+</Property>
+
+<Index name="TimeStampEndIndex">
+<Properties>TimeStampEnd</Properties>
+</Index>
+
+<Property name="NumOfGlobals">
+<Type>%Integer</Type>
+</Property>
+
+<Property name="DBAllocatedSize">
+<Description>
+as string since this will have units after the number</Description>
+<Type>%String</Type>
+</Property>
+
+<Property name="DBUsedSize">
+<Description>
+will be calculated as DB Size - DB Available Space</Description>
+<Type>%Decimal</Type>
+</Property>
+
+<Property name="NewMessagesCountSinceLastRun">
+<Type>%Integer</Type>
+</Property>
+
+<Property name="FastFlag">
+<Description><![CDATA[
+indicates whether the corresponding globals in the <Method>Sample.DBExpansion.Data.GlobalAnalysisInfo</Method> were retrieved with usedMB or without (=0)
+FastFlag = 1 means that they were retrieved in fast mode (no UsedMB), FastFlag = 0 indicates that the UsedMB field was retrieved as well]]></Description>
+<Type>%Boolean</Type>
+</Property>
+
+<Method name="GetTimeStampEnd">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>id:%String</FormalSpec>
+<ReturnType>%TimeStamp</ReturnType>
+<Implementation><![CDATA[
+    set obj = ..%OpenId(id) //check obj exists..
+
+    return obj.TimeStampEnd
+]]></Implementation>
+</Method>
+
+<Storage name="Default">
+<Type>%Library.CacheStorage</Type>
+<DataLocation>^Sample.DBEx95BC.DBAnalysisInfoD</DataLocation>
+<DefaultData>DBAnalysisInfoDefaultData</DefaultData>
+<IdLocation>^Sample.DBEx95BC.DBAnalysisInfoD</IdLocation>
+<IndexLocation>^Sample.DBEx95BC.DBAnalysisInfoI</IndexLocation>
+<StreamLocation>^Sample.DBEx95BC.DBAnalysisInfoS</StreamLocation>
+<ExtentSize>1</ExtentSize>
+<Data name="DBAnalysisInfoDefaultData">
+<Value name="1">
+<Value>%%CLASSNAME</Value>
+</Value>
+<Value name="2">
+<Value>DatabaseName</Value>
+</Value>
+<Value name="3">
+<Value>TimeStampStart</Value>
+</Value>
+<Value name="4">
+<Value>TimeStampEnd</Value>
+</Value>
+<Value name="5">
+<Value>NumOfGlobals</Value>
+</Value>
+<Value name="6">
+<Value>DBAllocatedSize</Value>
+</Value>
+<Value name="7">
+<Value>DBUsedSize</Value>
+</Value>
+<Value name="8">
+<Value>NewMessagesCountSinceLastRun</Value>
+</Value>
+<Value name="9">
+<Value>FastFlag</Value>
+</Value>
+</Data>
+<Property name="%%CLASSNAME">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>2</AverageFieldSize>
+</Property>
+<Property name="%%ID">
+<Selectivity>1</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="DBAllocatedSize">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>7</AverageFieldSize>
+</Property>
+<Property name="DBUsedSize">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="DatabaseName">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>51</AverageFieldSize>
+</Property>
+<Property name="NewMessagesCountSinceLastRun">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="NumOfGlobals">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>2</AverageFieldSize>
+</Property>
+<Property name="TimeStampEnd">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>21</AverageFieldSize>
+</Property>
+<Property name="TimeStampStart">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>21</AverageFieldSize>
+</Property>
+<SQLMap name="IDKEY">
+<BlockCount>-4</BlockCount>
+</SQLMap>
+</Storage>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Data.GlobalAnalysisInfo">
+<Super>%Persistent</Super>
+<TimeChanged>66709,38617.0383443</TimeChanged>
+<TimeCreated>66584,32687.3700192</TimeCreated>
+
+<Property name="GlobalName">
+<Type>%String</Type>
+<Parameter name="MAXLEN" value="200"/>
+</Property>
+
+<Index name="GlobalNameIndex">
+<Properties>GlobalName</Properties>
+</Index>
+
+<Property name="ClassName">
+<Type>%String</Type>
+<Parameter name="MAXLEN" value="200"/>
+</Property>
+
+<Property name="AllocatedMB">
+<Type>%Float</Type>
+</Property>
+
+<Property name="UsedMB">
+<Type>%Float</Type>
+</Property>
+
+<Property name="MetaData">
+<Description><![CDATA[
+use MetaData->.......]]></Description>
+<Type>Sample.DBExpansion.Data.DBAnalysisInfo</Type>
+</Property>
+
+<Index name="MetaDataIndex">
+<Properties>MetaData</Properties>
+</Index>
+
+<ForeignKey name="DBAnalysisInfoFK">
+<OnDelete>cascade</OnDelete>
+<Properties>MetaData</Properties>
+<ReferencedClass>Sample.DBExpansion.Data.DBAnalysisInfo</ReferencedClass>
+</ForeignKey>
+
+<UDLText name="T">
+<Content><![CDATA[
+// this instead of a one to many relationship
+
+]]></Content>
+</UDLText>
+
+<Storage name="Default">
+<Type>%Library.CacheStorage</Type>
+<DataLocation>^Sample.DBE95BC.GlobalAnaly9E3AD</DataLocation>
+<DefaultData>GlobalAnalysisInfoDefaultData</DefaultData>
+<IdLocation>^Sample.DBE95BC.GlobalAnaly9E3AD</IdLocation>
+<IndexLocation>^Sample.DBE95BC.GlobalAnaly9E3AI</IndexLocation>
+<StreamLocation>^Sample.DBE95BC.GlobalAnaly9E3AS</StreamLocation>
+<ExtentSize>148</ExtentSize>
+<Data name="GlobalAnalysisInfoDefaultData">
+<Value name="1">
+<Value>%%CLASSNAME</Value>
+</Value>
+<Value name="2">
+<Value>GlobalName</Value>
+</Value>
+<Value name="3">
+<Value>ClassName</Value>
+</Value>
+<Value name="4">
+<Value>AllocatedMB</Value>
+</Value>
+<Value name="5">
+<Value>UsedMB</Value>
+</Value>
+<Value name="6">
+<Value>TimeStamp</Value>
+</Value>
+<Value name="7">
+<Value>MetaData</Value>
+</Value>
+</Data>
+<Property name="%%CLASSNAME">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>2</AverageFieldSize>
+</Property>
+<Property name="%%ID">
+<Selectivity>1</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="AllocatedMB">
+<Selectivity>1.2669%</Selectivity>
+<OutlierSelectivity>.695946:.008</OutlierSelectivity>
+<AverageFieldSize>3.99</AverageFieldSize>
+</Property>
+<Property name="ClassName">
+<Selectivity>1.1457%</Selectivity>
+<OutlierSelectivity>.736486:</OutlierSelectivity>
+<AverageFieldSize>8.08</AverageFieldSize>
+</Property>
+<Property name="GlobalName">
+<Selectivity>0.6757%</Selectivity>
+<AverageFieldSize>19.05</AverageFieldSize>
+</Property>
+<Property name="MetaData">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="TimeStamp">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>21</AverageFieldSize>
+</Property>
+<Property name="UsedMB">
+<Selectivity>1.1898%</Selectivity>
+<OutlierSelectivity>.452703:0</OutlierSelectivity>
+<AverageFieldSize>3.08</AverageFieldSize>
+</Property>
+<SQLMap name="IDKEY">
+<BlockCount>-8</BlockCount>
+</SQLMap>
+<SQLMap name="MetaDataIndex">
+<BlockCount>-4</BlockCount>
+</SQLMap>
+</Storage>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Data.GlobalInvestigationReport">
+<Description><![CDATA[
+**********************************************************
+*                   ** N O T I C E **                    *
+*                - TEST/DEMO SOFTWARE -                  *
+* This code is not supported by InterSystems as part     *
+* of any released product.  It is supplied by            *
+* InterSystems as a demo/test tool for a specific        *
+* product and version. The user or customer is fully     *
+* responsible for the maintenance and testing of this    *
+* software after delivery, and InterSystems shall bear   *
+* no responsibility nor liabilities for errors or misuse *
+* of this code.                                          *
+**********************************************************
+This table will store analysis of the globals that were collected on the data collection phase.
+It will be populated by the <Method> InvestigateInfoTask </Method>]]></Description>
+<Super>%Persistent</Super>
+<TimeChanged>66702,34792.086114</TimeChanged>
+<TimeCreated>66612,52356.9009183</TimeCreated>
+
+<Property name="GlobalName">
+<Type>%String</Type>
+</Property>
+
+<Property name="ClassName">
+<Type>%String</Type>
+</Property>
+
+<Property name="OverGrew">
+<Description>
+Whether the global grew more than was permitted when the task parameters were set</Description>
+<Type>%Boolean</Type>
+</Property>
+
+<Property name="MaxGrowthNormalized">
+<Description><![CDATA[
+This is the max amount that it has grown between measurements (normalized to the days the task has requested)
+<br>
+Example: if a global growth (measured every 7 days) was from 100 MB to 110MB to 105MB the max growth is 10MB = 10% / 7 days * how many days person requested (i.e. 10/7 * 30) ]]></Description>
+<Type>%Float</Type>
+</Property>
+
+<Property name="MaxGrowthMB">
+<Description><![CDATA[
+Maximum growth represented as MB 
+<br>
+Note that this is independent of time passed between measurements, unlike the normalized maxgrowth]]></Description>
+<Type>%Float</Type>
+</Property>
+
+<Property name="HistoricGrowthPerDay">
+<Description><![CDATA[
+This is a percentage of how much it has grown per day from first measurement to last (wihtin history of parameter of task)
+<br>
+Example: in the same example as above, the historic growth would be 5% / 14 days]]></Description>
+<Type>%Float</Type>
+</Property>
+
+<Property name="GrowthForRequestedPeriod">
+<Description><![CDATA[
+This is the growth per day (from first to last) multiplied by the period warning to make the numbers more digestible 
+<br>
+Example: as per the examples above and assuming the input parameters had requested to look out for a growth of more than 15% in 30 days we would see that this becomes (5% /14days) * 30 days = 10.7% ]]></Description>
+<Type>%Float</Type>
+</Property>
+
+<Property name="AmountGrown">
+<Description>
+Growth but as an amount not a percentage (MB)</Description>
+<Type>%Float</Type>
+</Property>
+
+<Property name="FastFlagAll">
+<Description>
+Technically 2 tasks could be built, one that runs fast and one slow for the same table, then we need to know when summing sizes whether to account for allocated or used. if this is true at least some data was collected with fast method and allocated sizes will be used</Description>
+<Type>%Boolean</Type>
+</Property>
+
+<Property name="Decrease">
+<Description>
+Whether the global has ever decreased in size as per measurements, indicates purge working to some degree</Description>
+<Type>%Boolean</Type>
+</Property>
+
+<Property name="ReportNum">
+<Description>
+Analogous to metaID in data collection task, will correspond to which metadata this belongs</Description>
+<Type>%Integer</Type>
+</Property>
+
+<ForeignKey name="InvestigationMetaFK">
+<OnDelete>cascade</OnDelete>
+<Properties>ReportNum</Properties>
+<ReferencedClass>Sample.DBExpansion.Data.InvestigationMeta</ReferencedClass>
+</ForeignKey>
+
+<Storage name="Default">
+<Type>%Library.CacheStorage</Type>
+<DataLocation>^Sample.DBE95BC.GlobalInves8D80D</DataLocation>
+<DefaultData>GlobalInvestigationReportDefaultData</DefaultData>
+<IdLocation>^Sample.DBE95BC.GlobalInves8D80D</IdLocation>
+<IndexLocation>^Sample.DBE95BC.GlobalInves8D80I</IndexLocation>
+<StreamLocation>^Sample.DBE95BC.GlobalInves8D80S</StreamLocation>
+<ExtentSize>304</ExtentSize>
+<Data name="GlobalInvestigationReportDefaultData">
+<Value name="1">
+<Value>%%CLASSNAME</Value>
+</Value>
+<Value name="2">
+<Value>GlobalName</Value>
+</Value>
+<Value name="3">
+<Value>ClassName</Value>
+</Value>
+<Value name="4">
+<Value>OverGrew</Value>
+</Value>
+<Value name="5">
+<Value>MaxGrowth</Value>
+</Value>
+<Value name="6">
+<Value>HistoricGrowth</Value>
+</Value>
+<Value name="7">
+<Value>GrowthForRequestedPeriod</Value>
+</Value>
+<Value name="8">
+<Value>Decrease</Value>
+</Value>
+<Value name="9">
+<Value>MetaData</Value>
+</Value>
+<Value name="10">
+<Value>ReportNum</Value>
+</Value>
+<Value name="11">
+<Value>FastFlagOffAll</Value>
+</Value>
+<Value name="12">
+<Value>FastFlagAll</Value>
+</Value>
+<Value name="13">
+<Value>AmountGrown</Value>
+</Value>
+<Value name="14">
+<Value>HistoricGrowthPerDay</Value>
+</Value>
+<Value name="15">
+<Value>MaxGrowthNormalized</Value>
+</Value>
+<Value name="16">
+<Value>MaxGrowthMB</Value>
+</Value>
+</Data>
+<Property name="%%CLASSNAME">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>2</AverageFieldSize>
+</Property>
+<Property name="%%ID">
+<Selectivity>1</Selectivity>
+<AverageFieldSize>4</AverageFieldSize>
+</Property>
+<Property name="AmountGrown">
+<Selectivity>0.6579%</Selectivity>
+<OutlierSelectivity>.960526:0</OutlierSelectivity>
+<AverageFieldSize>2.61</AverageFieldSize>
+</Property>
+<Property name="ClassName">
+<Selectivity>1.0881%</Selectivity>
+<OutlierSelectivity>.717105:</OutlierSelectivity>
+<AverageFieldSize>8.89</AverageFieldSize>
+</Property>
+<Property name="Decrease">
+<Selectivity>1.9737%</Selectivity>
+<OutlierSelectivity>.980263:0</OutlierSelectivity>
+<AverageFieldSize>2.02</AverageFieldSize>
+</Property>
+<Property name="FastFlagAll">
+<Selectivity>0.6579%</Selectivity>
+<OutlierSelectivity>.993421:0</OutlierSelectivity>
+<AverageFieldSize>2.01</AverageFieldSize>
+</Property>
+<Property name="GlobalName">
+<Selectivity>0.6579%</Selectivity>
+<AverageFieldSize>19.28</AverageFieldSize>
+</Property>
+<Property name="GrowthForRequestedPeriod">
+<Selectivity>0.6579%</Selectivity>
+<OutlierSelectivity>.960526:0</OutlierSelectivity>
+<AverageFieldSize>2.32</AverageFieldSize>
+</Property>
+<Property name="HistoricGrowthPerDay">
+<Selectivity>0.6579%</Selectivity>
+<OutlierSelectivity>.960526:0</OutlierSelectivity>
+<AverageFieldSize>2.31</AverageFieldSize>
+</Property>
+<Property name="MaxGrowthMB">
+<Selectivity>0.6579%</Selectivity>
+<OutlierSelectivity>.973684:0</OutlierSelectivity>
+<AverageFieldSize>2.05</AverageFieldSize>
+</Property>
+<Property name="MaxGrowthNormalized">
+<Selectivity>0.6579%</Selectivity>
+<OutlierSelectivity>.973684:0</OutlierSelectivity>
+<AverageFieldSize>2.19</AverageFieldSize>
+</Property>
+<Property name="OverGrew">
+<Selectivity>2.6316%</Selectivity>
+<OutlierSelectivity>.973684:0</OutlierSelectivity>
+<AverageFieldSize>2.03</AverageFieldSize>
+</Property>
+<Property name="ReportNum">
+<Selectivity>50.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<SQLMap name="IDKEY">
+<BlockCount>-12</BlockCount>
+</SQLMap>
+</Storage>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Data.InvestigationMeta">
+<Description>
+**********************************************************
+*                   ** N O T I C E **                    *
+*                - TEST/DEMO SOFTWARE -                  *
+* This code is not supported by InterSystems as part     *
+* of any released product.  It is supplied by            *
+* InterSystems as a demo/test tool for a specific        *
+* product and version. The user or customer is fully     *
+* responsible for the maintenance and testing of this    *
+* software after delivery, and InterSystems shall bear   *
+* no responsibility nor liabilities for errors or misuse *
+* of this code.                                          *
+**********************************************************
+Metadata of GlobalInvestigationReport Table</Description>
+<Super>%Persistent</Super>
+<TimeChanged>66702,39535.7521482</TimeChanged>
+<TimeCreated>66612,56421.9262722</TimeCreated>
+
+<Property name="NumGlobalsOvergrown">
+<Description>
+Number of globals that grew more than permitted</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="BiggestGrower">
+<Description>
+Global that grew the most (by AmountGrown, measured in MB)</Description>
+<Type>%String</Type>
+</Property>
+
+<Property name="GrowthPercentageWarning">
+<Description>
+Parameter user inputted to run task. Growing above this percentage will trigger the OverGrown flag</Description>
+<Type>%Decimal</Type>
+</Property>
+
+<Property name="PeriodWarning">
+<Description>
+How many days to set as the limit for GrowthPercentageWarning. If GrowthPercentageWarning was 10% and PeriodWarning was 5 then the allowed growth would be an equivalent of 10% in 5 days. </Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="HistoryLength">
+<Description>
+How many days back to investigate.</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="TimeStamp">
+<Type>%TimeStamp</Type>
+</Property>
+
+<Property name="NumberOfMeasurementsInspected">
+<Type>%Integer</Type>
+</Property>
+
+<Storage name="Default">
+<Description>
+what kind of things do we want in here?</Description>
+<Type>%Library.CacheStorage</Type>
+<DataLocation>^Sample.DBE95BC.Investigati7DEBD</DataLocation>
+<DefaultData>InvestigationMetaDefaultData</DefaultData>
+<IdLocation>^Sample.DBE95BC.Investigati7DEBD</IdLocation>
+<IndexLocation>^Sample.DBE95BC.Investigati7DEBI</IndexLocation>
+<StreamLocation>^Sample.DBE95BC.Investigati7DEBS</StreamLocation>
+<ExtentSize>1</ExtentSize>
+<Data name="InvestigationMetaDefaultData">
+<Value name="1">
+<Value>%%CLASSNAME</Value>
+</Value>
+<Value name="2">
+<Value>NumGlobalsOvergrown</Value>
+</Value>
+<Value name="3">
+<Value>BiggestGlobal</Value>
+</Value>
+<Value name="4">
+<Value>BiggestGrower</Value>
+</Value>
+<Value name="5">
+<Value>GrowthPercentageWarning</Value>
+</Value>
+<Value name="6">
+<Value>PeriodWarning</Value>
+</Value>
+<Value name="7">
+<Value>HistoricLength</Value>
+</Value>
+<Value name="8">
+<Value>TimeStamp</Value>
+</Value>
+<Value name="9">
+<Value>NumberOfMeasurementsInspected</Value>
+</Value>
+<Value name="10">
+<Value>HistoryLength</Value>
+</Value>
+</Data>
+<Property name="%%CLASSNAME">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>2</AverageFieldSize>
+</Property>
+<Property name="%%ID">
+<Selectivity>1</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="BiggestGrower">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>33</AverageFieldSize>
+</Property>
+<Property name="GrowthPercentageWarning">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="HistoryLength">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="NumGlobalsOvergrown">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="NumberOfMeasurementsInspected">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="PeriodWarning">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="TimeStamp">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>21</AverageFieldSize>
+</Property>
+<SQLMap name="IDKEY">
+<BlockCount>-4</BlockCount>
+</SQLMap>
+</Storage>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Task.CaptureInfoTask">
+<Description><![CDATA[
+calls <Method> ##class(Sample.DBExpansion.DBSizeAnalysis.CaptureInfo.RetrieveData() </Method>]]></Description>
+<Super>%SYS.Task.Definition</Super>
+<TimeChanged>66660,49169.6155899</TimeChanged>
+<TimeCreated>66584,33141.9658254</TimeCreated>
+
+<Parameter name="TaskName">
+<Default><![CDATA[Global&Database Size Analysis Capture]]></Default>
+</Parameter>
+
+<Property name="Fast">
+<Description>
+a 1 indicates that it will retrieve global information as quick as possible (no retrieval of usedMB, only of allocatedMB)
+a 0 indicates that it will be slower but more thorough (will retrieve both usedMB and allocatedMB) of globals</Description>
+<Type>%Boolean</Type>
+<InitialExpression>0</InitialExpression>
+</Property>
+
+<Method name="OnTask">
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+		do ##class(%SYS.System).WriteToConsoleLog("task started")
+		set st = ##class(Sample.DBExpansion.DBSizeAnalysis.CaptureInfo).RetrieveData(..Fast)
+		if $$$ISERR(st){
+			do ##class(%SYS.System).WriteToConsoleLog("task failed: "_st)
+		}
+		else {
+			do ##class(%SYS.System).WriteToConsoleLog("task completed successfully")
+		}
+		return st
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Task.InvestigateInfoTask">
+<Description>
+**********************************************************
+*                   ** N O T I C E **                    *
+*                - TEST/DEMO SOFTWARE -                  *
+* This code is not supported by InterSystems as part     *
+* of any released product.  It is supplied by            *
+* InterSystems as a demo/test tool for a specific        *
+* product and version. The user or customer is fully     *
+* responsible for the maintenance and testing of this    *
+* software after delivery, and InterSystems shall bear   *
+* no responsibility nor liabilities for errors or misuse *
+* of this code.                                          *
+**********************************************************
+Task that will investigate global growth</Description>
+<Super>%SYS.Task.Definition</Super>
+<TimeChanged>66702,40641.030406</TimeChanged>
+<TimeCreated>66584,33273.250529</TimeCreated>
+
+<Parameter name="TaskName">
+<Default>Report Global Size Anomalies</Default>
+</Parameter>
+
+<Property name="GrowthPercentageWarning">
+<Description>
+This is the 'limit' of growth we want to allow (as a percentage). Anything above this will be categorized as overgown.</Description>
+<Type>%Decimal</Type>
+<InitialExpression>5</InitialExpression>
+</Property>
+
+<Property name="PeriodWarning">
+<Description>
+Amount of days to permit the GrowthPercentageWarning growth to take.
+must be at least one since the growth gets converted to an amount per day (i.e. we divide by this number)</Description>
+<Type>%Integer</Type>
+<InitialExpression>7</InitialExpression>
+<Parameter name="MINVAL" value="1"/>
+</Property>
+
+<Property name="HistoryLength">
+<Description>
+How far back to go check, in days </Description>
+<Type>%Integer</Type>
+<InitialExpression>30</InitialExpression>
+<Parameter name="MINVAL" value="0"/>
+</Property>
+
+<Method name="OnTask">
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	if ..PeriodWarning < 0 {
+		return $$$ERROR($$$GeneralError, "PeriodWarning Must be at least 1") ///note than minval does not enforce this value, merely warns user before attempting to run task
+	}
+	elseif ..HistoryLength < 0	{
+		return $$$ERROR($$$GeneralError, "HistoryLength must be at least 0") ///note than minval does not enforce this value, merely warns user before attempting to run task
+	}
+	
+	/// if got to here then it is fine to run
+	/// set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).Investigate(..GrowthPercentageWarning, ..PeriodWarning, ..HistoryLength)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).CreateReport(..GrowthPercentageWarning, ..PeriodWarning, ..HistoryLength)
+	return st
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Test.CaptureTest">
+<Super>%UnitTest.TestCase</Super>
+<TimeChanged>66660,44973.1547273</TimeChanged>
+<TimeCreated>66584,35885.8020211</TimeCreated>
+
+<Method name="OnBeforeAllTests">
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+		
+	return $$$OK
+]]></Implementation>
+</Method>
+
+<Method name="TestMessageIncreaseCount">
+<Implementation><![CDATA[
+	set timebeforeMsgsAdded = $ZDATETIME($HOROLOG,3)
+	
+	// add x new messages 7 days in the future
+	for i = 1:1:16
+	{
+		set newmsgheader = ##class(Ens.MessageHeader).%New()
+		set newmsgheader.TimeCreated = $ZDATETIME($HOROLOG+7,3) /// 10 days in the future, to not get confused with current stats
+		set st = newmsgheader.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}		
+	}
+	set numNewMsgs = ##class(Sample.DBExpansion.Util.Helper).getNewMessageNum(timebeforeMsgsAdded)
+	
+	// count messages since last db entry 
+	// assert that this count is x 
+	do $$$AssertEquals(16,numNewMsgs)
+]]></Implementation>
+</Method>
+
+<Method name="TestPopDBTable">
+<Implementation><![CDATA[
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.CaptureInfo).PopulateDBTable(.MetaID)
+	do $$$AssertEquals(st, 1) ///test that populate db table works...
+
+	///check that there is something in the table....
+	set query = "SELECT * FROM Sample_DBExpansion_Data.DBAnalysisInfo WHERE ID = ?" //get all unique globalnames   
+	set statement = ##class(%SQL.Statement).%New()
+	set status = statement.%Prepare(query)
+	set resultset = statement.%Execute(MetaID)
+	do $$$AssertEquals(resultset.%SQLCODE, 0)
+]]></Implementation>
+</Method>
+
+<Method name="TestCapture">
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.CaptureInfo).PopulateDBTable(.MetaID)
+	do $$$AssertEquals(st, 1) ///test that populate db table works...
+
+	do ##class(%SYS.Namespace).GetNSInfo($NAMESPACE, .dbinfo)
+	set directory = dbinfo("Directory")
+
+	if ($data(^DBTESTGLOBAL19)) /// need to make sure there is no global with this name as we will be deleting our home-made global at the end of the test)
+	{
+		return $$$ERROR($$$GeneralError,"%Global DBTESTGLOBAL19 already exists...")
+	}
+	set ^DBTESTGLOBAL19 = 48
+	
+	set statement = ##class(%SQL.Statement).%New()
+	set status = statement.%PrepareClassQuery("%SYS.GlobalQuery","Size")
+	set resultset = statement.%Execute(directory,,"DBTESTGLOBAL19",,,0) //// just want the one global we created
+	if resultset.%Next(){
+		set globalName = resultset.%Get("Name")
+		set allocMB = resultset.%Get("Allocated MB")	    
+		set usedMB = resultset.%Get("Used MB")    
+	}
+	set className = ""
+	#dim %sqlcontext As %SQLProcContext 	
+	set %sqlcontext = ""
+	do ##class(%ExtentMgr.Util).GlobalUses("^"_globalName)	
+	if (%sqlcontext.%Next())
+	{
+		set className = %sqlcontext.%Get("UsedByExtent") //should be blank anyways...
+	}
+
+	///note the change from previous versions of MetaDataID to MetaData
+	&sql(Insert into Sample_DBExpansion_Data.GlobalAnalysisInfo(ClassName, GlobalName, AllocatedMB, UsedMB, MetaData)
+	    	 VALUES (:className, :globalName, :allocMB, :usedMB, :MetaID))
+
+	do $$$AssertEquals(SQLCODE, 0) /// test that insertion works
+	set dbNewestEntry = ##class(Sample.DBExpansion.Data.DBAnalysisInfo).%OpenId(MetaID)
+	set dbNewestEntry.NumOfGlobals = 1
+	set dbNewestEntry.FastFlag = 0
+	set dbNewestEntry.TimeStampEnd = $ZDATETIME($HOROLOG,3) 
+	set saveStatus = dbNewestEntry.%Save()
+	do $$$AssertEquals(saveStatus,1) ///test that we are able to update the db stats
+
+	do $$$AssertEquals(MetaID, dbNewestEntry.%Id()) /// test that meta id of global matches id of db table
+
+	//delete...
+	
+	&sql(DELETE FROM Sample_DBExpansion_Data.DBAnalysisInfo WHERE ID = :MetaID)
+	do $$$AssertEquals(SQLCODE, 0) /// test that we can delete the table from db
+	&sql(SELECT globalName INTO :myGlobalName FROM Sample_DBExpansion_Data.GlobalAnalysisInfo WHERE ID = :MetaID)
+	do $$$AssertEquals(SQLCODE, 100) /// here we are testing that the foreign key works... delete of DB deletes associated globals
+	
+	kill ^DBTESTGLOBAL19
+]]></Implementation>
+</Method>
+
+<Method name="OnAfterAllTests">
+<Description><![CDATA[
+Run by <B>RunTest</B> once after all test methods in the test class are run. Can be used to tear down a test environment that was set up by <B>OnBeforeAllTests</B> See example in <b>OnBeforeAllTests</b>. ]]></Description>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+    
+	set today = $ZDATETIME($HOROLOG,3)
+	//delete msg headers...
+	&sql(DELETE FROM ENS.MessageHeader WHERE DATEDIFF('dd',:today,TimeCreated) >=1 )
+	RETURN $$$OK
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Test.InspectTest">
+<Super>%UnitTest.TestCase</Super>
+<TimeChanged>66674,63060.4749586</TimeChanged>
+<TimeCreated>66584,36168.8222725</TimeCreated>
+
+<Property name="GlobalMoment1">
+<Type>Sample.DBExpansion.Data.GlobalAnalysisInfo</Type>
+</Property>
+
+<Property name="FakeDB1">
+<Type>Sample.DBExpansion.Data.DBAnalysisInfo</Type>
+</Property>
+
+<Property name="GlobalMoment2">
+<Type>Sample.DBExpansion.Data.GlobalAnalysisInfo</Type>
+</Property>
+
+<Property name="FakeDB2">
+<Type>Sample.DBExpansion.Data.DBAnalysisInfo</Type>
+</Property>
+
+<Property name="GlobalMoment3">
+<Type>Sample.DBExpansion.Data.GlobalAnalysisInfo</Type>
+</Property>
+
+<Property name="FakeDB3">
+<Type>Sample.DBExpansion.Data.DBAnalysisInfo</Type>
+</Property>
+
+<Property name="GlobalMoment4">
+<Type>Sample.DBExpansion.Data.GlobalAnalysisInfo</Type>
+</Property>
+
+<Property name="FakeDB4">
+<Type>Sample.DBExpansion.Data.DBAnalysisInfo</Type>
+</Property>
+
+<UDLText name="T">
+<Content><![CDATA[
+// due to foreign key all globals need to be linked to db...
+
+]]></Content>
+</UDLText>
+
+<Method name="OnBeforeAllTests">
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+		set fakeDB1 = ##class(Sample.DBExpansion.Data.DBAnalysisInfo).%New()
+		set fakeDB1.DatabaseName = "FakeTestDB"
+		set fakeDB1.TimeStampEnd = $ZDATETIME($HOROLOG-15,3) // 15 days ago
+		set fakeDB1.FastFlag = 1
+		set st = fakeDB1.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		set ..FakeDB1 = fakeDB1
+		set db1ID = fakeDB1.%Id()
+		
+		
+		set globalMoment1 = ##class(Sample.DBExpansion.Data.GlobalAnalysisInfo).%New()
+		set globalMoment1.AllocatedMB = 100
+		set globalMoment1.ClassName = "MyTestClass"
+		set globalMoment1.GlobalName = "TestGlobal"
+		
+		set globalMoment1.MetaData = fakeDB1
+		
+		///set globalMoment1.TimeStamp = $ZDATETIME($HOROLOG-15,3) //15 days ago
+		set globalMoment1.UsedMB = 100
+		set st = globalMoment1.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		
+		set ..GlobalMoment1 = globalMoment1
+
+
+		set fakeDB2 = ##class(Sample.DBExpansion.Data.DBAnalysisInfo).%New()
+		set fakeDB2.DatabaseName = "FakeTestDB"
+		set fakeDB2.TimeStampEnd = $ZDATETIME($HOROLOG-10,3) //10 days ago
+		set fakeDB2.FastFlag = 0
+		set st = fakeDB2.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		set ..FakeDB2 = fakeDB2
+		set db2ID = fakeDB2.%Id()
+		
+
+		set globalMoment2 = ##class(Sample.DBExpansion.Data.GlobalAnalysisInfo).%New()
+		set globalMoment2.AllocatedMB = 200
+		set globalMoment2.ClassName = "MyTestClass"
+		set globalMoment2.GlobalName = "TestGlobal"
+		set globalMoment2.MetaData = fakeDB2
+		///set globalMoment2.TimeStamp = $ZDATETIME($HOROLOG-10,3) //10 days ago
+		set globalMoment2.UsedMB = 	110
+		set st = globalMoment2.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		set ..GlobalMoment2 = globalMoment2
+		
+		
+		
+		
+		set fakeDB3 = ##class(Sample.DBExpansion.Data.DBAnalysisInfo).%New()
+		set fakeDB3.DatabaseName = "FakeTestDB"
+		set fakeDB3.TimeStampEnd = $ZDATETIME($HOROLOG-5,3) //5 days ago
+		set fakeDB3.FastFlag = 0
+		set st = fakeDB3.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		set ..FakeDB3 = fakeDB3
+		
+		set db3ID = fakeDB3.%Id()
+
+
+		
+		set globalMoment3 = ##class(Sample.DBExpansion.Data.GlobalAnalysisInfo).%New()
+		set globalMoment3.AllocatedMB = 50
+		set globalMoment3.ClassName = "MyTestClass"
+		set globalMoment3.GlobalName = "TestGlobal"
+		set globalMoment3.MetaData = fakeDB3
+		set globalMoment3.UsedMB = 	45
+		set st = globalMoment3.%Save()
+
+		if $$$ISERR(st)
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+
+		set ..GlobalMoment3 = globalMoment3
+		
+		////global moment 4
+		set fakeDB4 = ##class(Sample.DBExpansion.Data.DBAnalysisInfo).%New()
+		set fakeDB4.DatabaseName = "FakeTestDB"
+		set fakeDB4.TimeStampEnd = $ZDATETIME($HOROLOG,3) //5 days ago
+		set fakeDB4.FastFlag = 0
+		set st = fakeDB4.%Save()
+		if st'=1 
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+		set ..FakeDB4 = fakeDB4
+		
+		set db4ID = fakeDB4.%Id()
+
+
+		
+		set globalMoment4 = ##class(Sample.DBExpansion.Data.GlobalAnalysisInfo).%New()
+		set globalMoment4.AllocatedMB = 125
+		set globalMoment4.ClassName = "MyTestClass"
+		set globalMoment4.GlobalName = "TestGlobal"
+		set globalMoment4.MetaData = fakeDB4
+		set globalMoment4.UsedMB = 	121
+		set st = globalMoment4.%Save()
+
+		if $$$ISERR(st)
+		{
+			do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+		}
+
+		set ..GlobalMoment4 = globalMoment4
+
+
+
+
+
+		Quit $$$OK
+]]></Implementation>
+</Method>
+
+<Method name="TestGlobalSizeHistory">
+<Implementation><![CDATA[
+	
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).CreateReport(20,10,300)
+	do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+
+	
+	&sql(SELECT AmountGrown, Decrease, FastFlagAll, GrowthForRequestedPeriod, HistoricGrowthPerDay, MaxGrowthMB, MaxGrowthNormalized, OverGrew, ReportNum 
+	INTO :myAmountGrown, :myDecrease, :myFastFlagAll, :myGrowthForRequestedPeriod, :myHistoricGrowthPerDay, :myMaxGrowthMB, :myMaxGrowthNormalized, :myOverGrew, :myReportNum
+	FROM Sample_DBExpansion_Data.GlobalInvestigationReport
+	WHERE ClassName = 'MyTestClass'
+	)
+	
+	do $$$AssertEquals(myAmountGrown, 25)
+	do $$$AssertEquals(myDecrease, 1)
+	
+	do $$$AssertEquals(myFastFlagAll, 1)
+	do $$$AssertEquals(myGrowthForRequestedPeriod, 16.66666666666666667)
+	do $$$AssertEquals(myHistoricGrowthPerDay, 1.666666666666666667)
+	do $$$AssertEquals(myMaxGrowthMB, 100)
+	do $$$AssertEquals(myMaxGrowthNormalized, 300)
+	do $$$AssertEquals(myOverGrew, 1)
+		
+	
+	#; &sql(DELETE FROM Sample_DBExpansion_Data.GlobalInvestigationReport WHERE ID = :myReportNum)
+	
+	#; write !!!, "ROW ID IS: "_%ROWID
+	
+	
+
+
+	///check to see that testglobal is as expected... data collected... etc.
+
+	//set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalGrowthPerDay(..GlobalMoment1.GlobalName, 20, .growthPerDayAll) 
+	//set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalGrowthCheck("TestGlobal","MyTestClass", 15,10, 30, 1)
+	//do $$$AssertEquals(growthPerDayAll, 2.1)
+	//set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalGrowthPerDay(..GlobalMoment2.GlobalName, 14, .growthPerDayNewewst) //don't include anything 15 days or older
+	//do $$$AssertEquals(growthPerDayNewewst, 2)
+	//set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalGrowthPerDay(..GlobalMoment3.GlobalName, 7, .growthPerDayOne) //if there is just one global in the recent history there is no growth
+	//do $$$AssertEquals(growthPerDayOne, 0)
+]]></Implementation>
+</Method>
+
+<UDLText name="T">
+<Content><![CDATA[
+/*
+Method TestIncreaseAlert()
+{
+	//only comparing between "usedmb"
+	set ..FakeDB1.FastFlag = 0
+	set ..FakeDB2.FastFlag = 0
+	set ..FakeDB3.FastFlag = 0
+	
+	
+	//test all data/global points (3)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName, 1, 20, 30, .globalIncreaseAlertFlagAll)
+	do $$$AssertNotEquals(globalIncreaseAlertFlagAll,0)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,50,20,30, .globalIncreaseAlertNoFlagAll) //should be no flag (2.5%perday)
+	do $$$AssertEquals(globalIncreaseAlertNoFlagAll,0)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,31.5,15,15, .globalIncreaseAlertFlagEdge) //growth in last 15 days was 2.1% per day (31.5% over 15 days)
+	do $$$AssertNotEquals(globalIncreaseAlertFlagEdge,0)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,32,15,15, .globalIncreaseAlertNoFlagEdge) // 32/15 is more growth per day than we have seen, should see no flag
+	do $$$AssertEquals(globalIncreaseAlertNoFlagEdge,0)
+	
+	//test varying amount of data points
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,29, 14, 14, .globalIncreaseAlertFlagRecent) //-14 days to now it is 2% not 2.1% increase per day, 29/14 is > 2, <2.1
+	do $$$AssertEquals(globalIncreaseAlertFlagRecent,0)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,10, 7, 14, .globalIncreaseAlertFlagRecent2) ///10/7%  (<2) per day in last 14 days but actual data shows 2 % so should raise flag
+	do $$$AssertNotEquals(globalIncreaseAlertFlagRecent2,0)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,50, 25, 10, .globalIncreaseAlertNoFlagRecent) //(50/25)=2% per day in last 10 days
+	do $$$AssertNotEquals(globalIncreaseAlertNoFlagRecent,0)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,21, 10, 10, .globalIncreaseAlertNoFlagRecent2) //2% per day in last 10 days, not 21/10 = 2.1
+	do $$$AssertEquals(globalIncreaseAlertNoFlagRecent2,0)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.0001, 1, 7, .globalIncreaseAlertNoFlagSingle) //only one measurement in last 5 days,  no relative increase.
+	do $$$AssertEquals(globalIncreaseAlertNoFlagSingle,0)
+	
+	
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.0001, 1, 3, .globalIncreaseAlertNoFlagNone) //test when there is no data
+	do $$$AssertEquals(globalIncreaseAlertNoFlagNone,0)
+	
+	//now we will introduce a new data point where the global size will have gone back to it's original size
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.000001, 10, 15, .globalIncreaseAlertNoIncreasePre) //-14 days to now it is 2% not 2.1% increase per day
+	do $$$AssertNotEquals(globalIncreaseAlertNoIncreasePre,0)
+	
+	//need to to enter 4th db entry to enable entry of 4th global entry
+	set fakeDB4 = ##class(Sample.DBExpansion.Data.DBAnalysisInfo).%New()
+	set fakeDB4.DatabaseName = "FakeTestDB"
+	set fakeDB4.TimeStampEnd =  $ZDATETIME($HOROLOG,3) ///now 
+	set fakeDB4.FastFlag = 0
+	set st = fakeDB4.%Save()
+	if st'=1 
+	{
+		do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+	}
+	set db4ID = fakeDB4.%Id()
+	
+	set globalMoment4 = ##class(Sample.DBExpansion.Data.GlobalAnalysisInfo).%New()
+	set globalMoment4.AllocatedMB = 200
+	set globalMoment4.ClassName = "MyTestClass"
+	set globalMoment4.GlobalName = "TestGlobal"
+	///set globalMoment4.TimeStamp = $ZDATETIME($HOROLOG,3)
+	set globalMoment4.UsedMB = 100
+	set globalMoment4.MetaData = db4ID
+	set st = globalMoment4.%Save()
+	if st'=1 
+	{
+		do $$$AssertEquals(st, 1)	//alert that saving message header failed only if fails... should not happen
+	}
+	
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.000001, 10, 15, .globalIncreaseAlertNoIncrease1) //no growth in 15 days
+	do $$$AssertEquals(globalIncreaseAlertNoIncrease1,0)
+	//negative increase (decrease) should not raise flags...
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.000001, 10, 10, .globalIncreaseAlertNoIncrease2) //negative growth in 10 days
+	do $$$AssertEquals(globalIncreaseAlertNoIncrease2,0)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.000001, 5,5, .globalIncreaseAlertNoIncrease3) //negative growth in 5 days
+	do $$$AssertEquals(globalIncreaseAlertNoIncrease3,0)
+	
+	// now check that in last 15 days there is growth but not in last 10 days or 5
+	set globalMoment4.UsedMB = 110
+	set st = globalMoment4.%Save()
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.000001, 10, 15, .globalIncreaseAlertNoIncrease4) // growth in 15 days
+	do $$$AssertNotEquals(globalIncreaseAlertNoIncrease4,0)
+	//negative increase (decrease) should not raise flags...
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.000001, 10, 10, .globalIncreaseAlertNoIncrease5) //negative growth in 10 days
+	do $$$AssertEquals(globalIncreaseAlertNoIncrease5,0)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.000001, 5,5, .globalIncreaseAlertNoIncrease6) //no growth in 5 days
+	do $$$AssertEquals(globalIncreaseAlertNoIncrease6,0)
+	
+	//now that in last 15 and 10 days there is growth but not in last 5
+	set globalMoment4.UsedMB = 121
+	set st = globalMoment4.%Save()
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.000001, 10, 15, .globalIncreaseAlertNoIncrease7) //no growth in 15 days
+	do $$$AssertNotEquals(globalIncreaseAlertNoIncrease7,0)
+	//negative increase (decrease) should not raise flags...
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.000001, 10, 10, .globalIncreaseAlertNoIncrease8) // growth in 10 days
+	do $$$AssertNotEquals(globalIncreaseAlertNoIncrease8,0)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalIncreaseAlert(..GlobalMoment1.GlobalName,0.000001, 5,5, .globalIncreaseAlertNoIncrease9) //no growth in 5 days
+	do $$$AssertEquals(globalIncreaseAlertNoIncrease9,0)
+}
+*/
+]]></Content>
+</UDLText>
+
+<UDLText name="T">
+<Content><![CDATA[
+/*
+Method TestFastFlagComparison()
+{
+	set ..FakeDB1.FastFlag = 1
+	set ..FakeDB2.FastFlag = 0
+	set ..FakeDB3.FastFlag = 0
+	
+	//check that from 15 days ago to today grew by 50mb (allocated)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalGrowthPerDay(..GlobalMoment1.GlobalName, 20, .flagTest1) ///compare this result with first test of TestGlobalSizeHistory
+	//used mb grew 2.1% per day but allocated grew 3.33, we want to confirm we are getting the allocated mb comparison b/c one is with fast flag.
+	do $$$AssertEquals(flagTest1,3.33)
+	set st = ##class(Sample.DBExpansion.DBSizeAnalysis.InvestigateInfo).GlobalGrowthPerDay(..GlobalMoment1.GlobalName,10, .flagTest2)
+	do $$$AssertEquals(flagTest2,2)
+}
+*/
+]]></Content>
+</UDLText>
+
+<Method name="OnAfterAllTests">
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+		
+	&sql(DELETE FROM Sample_DBExpansion_Data.GlobalAnalysisInfo
+    WHERE (GlobalName = 'TestGlobal'))
+	
+	&sql(DELETE FROM Sample_DBExpansion_Data.DBAnalysisInfo WHERE (DatabaseName = 'FakeTestDB'))
+	
+
+	&sql(DELETE FROM Sample_DBExpansion_Data.InvestigationMeta WHERE BiggestGrower = 'TestGlobal')
+	
+	return $$$OK
+]]></Implementation>
+</Method>
+
+<Method name="OnAfterOneTest">
+<Description><![CDATA[
+Run by <B>RunTest</B> immediately after each test method in the test class is run.<br>
+<dl>
+<dt><i>testname</i>
+<dd>Name of the test to be run. Required. 
+</dl> ]]></Description>
+<FormalSpec>testname:%String</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	//want to reset our flags each time...
+	//set ..FakeDB1.FastFlag = 0
+	//set ..FakeDB2.FastFlag = 0
+	//set ..FakeDB3.FastFlag = 0
+	Quit $$$OK
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Test.RESTAPITest">
+<Super>%UnitTest.TestCase</Super>
+<TimeChanged>66660,48116.6588709</TimeChanged>
+<TimeCreated>66584,41010.1364535</TimeCreated>
+
+<Method name="TestEndPoints">
+<Implementation><![CDATA[
+		set httprequest = ##class(%Net.HttpRequest).%New()
+		set httprequest.Port = ^%SYS("WebServer","Port")
+		
+		/// this is to test that it is password protected byt have not figured out way to get UI to work with password....
+		
+		#; do httprequest.Get("/Sample/dbAnalysis/globals/all")
+		#; do $$$AssertEquals(httprequest.HttpResponse.StatusCode, 401)
+		
+		set httprequest.Username = "aglikman" //NOT DYNAMIC
+		set httprequest.Password = "1234"
+		do httprequest.Get("/Sample/dbAnalysis/globals/all")
+		do $$$AssertEquals(httprequest.HttpResponse.StatusCode, 200)
+		
+		do httprequest.Get("/Sample/dbAnalysis/global/Ens.Alarm")
+		do $$$AssertEquals(httprequest.HttpResponse.StatusCode, 200)
+		
+		do httprequest.Get("/Sample/dbAnalysis/db/history")
+		do $$$AssertEquals(httprequest.HttpResponse.StatusCode, 200)
+		
+		do httprequest.Get("/Sample/dbAnalysis/globals/table/1000")
+		do $$$AssertEquals(httprequest.HttpResponse.StatusCode, 200)
+]]></Implementation>
+</Method>
+
+<Method name="TestResponses">
+<Implementation><![CDATA[	///?
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Test.TestManager">
+<Super>%UnitTest.Manager</Super>
+<TimeChanged>66584,36266.7966103</TimeChanged>
+<TimeCreated>66584,36233.4296045</TimeCreated>
+
+<Method name="RunTest">
+<Description><![CDATA[
+Runs classes that extend <b>%UnitTest.TestCase</b> that contain test methods.  Creates a log on each run, stored in <b>^UnitTest.Result</b>.<br> 
+<dl>
+<dt><i>testspec</i> 
+<dd><i>testspec</i> takes the form of <i>testsuite [ :testcase [ :testmethod ] ]</i>. 
+<br><br><i>testsuite</i> is a directory (and optionally, subdirectories) that contains tests. By default <b>RunTest</b> runs all tests found here recursively. <i>testspec</i> must be a child directory of the directory named by the global <b>^UnitTestRoot</b>.  
+ <b>^UnitTestRoot</b> must specify a valid directory because <b>RunTest</b> checks for its existence before running tests.  If <i>testspec</i> is not specified, then the <b>^UnitTestRoot</b> directory is used.  Any subdirectory whose name begins with an underscore ( _ ) is skipped.
+<br><br><i>testcase</i> is a class that extends <b>%UnitTest.TestCase</b> (contains tests) in the form <i>package.class</i> and is an optional argument. 
+<br><br><i>testmethod</i> is a method name and is an optional argument.
+<br><br><i>testspec</i> can also be an array of testsuite, or if you pass in a global name the global is an array of testsuites. In addition it also supports a comma separated set of values.
+<br><br>
+<dt><i>qualifiers</i> 
+<dd>Any of the following command-line arguments can be combined as a single string, such as <b>/noload/norecursive</b>. All are optional.<br><br>
+The first four (<b>debug</b>, <b>load</b>, <b>run</b>, and <b>recursive</b>) are negatable Booleans.  They can be turned on with <i>/arg</i> or off by adding <b>no</b> in the front, as <b>/noload</b> or adding <b>=0</b> to the end, as <b>/load=0</b>.<br><br> 
+
+<b>/debug</b>: Run in debug mode, which causes a break if a test fails. Default is <b>/nodebug</b>. <br><br>
+<b>/load</b>: Load use cases from the specified <i>testspec</i>. Default is <b>/load</b>. If <b>/load</b> and <b>/run</b> are both on, then all loaded classes, routines, and CSP files are deleted after the tests are run. To prevent them from being deleted at the end, load them with <b>DebugLoadTestSuite</b> and run them with <b>DebugRunTestCase</b>.<br><br>
+<b>/run</b>: Run the test suite.  Use <b>/norun</b> if you only want to load, but not run, a suite into a namespace. Default is <b>/run</b>.<br><br>
+<b>/recursive</b>: Recurse the specified directory when loading test classes. Default is <b>/recursive</b>.<br><br>
+<b>/display=all</b>: Display extended information when loading exported test class definitions. <b>/display=none</b> displays limited information. Default is <b>/display=all</b>. <br><br>
+<b>/autoload</b>: Automatically load sub-directories with the given name when loading test classes.
+Default is <b>/autoload=_autoload</b>.
+When this qualifier is set, classes are loaded from the given sub-directory of the current directory and its ancestors.
+This makes it possible to use a class in multiple test suites without copying it to each of their directories.<br><br>
+<b>/nodelete</b>: Do not delete loaded classes when the test is complete.<br><br>
+
+<dt><i>userparam</i> 
+<dd>An arbitrary argument passed in by the caller of the <b>UnitTest</b>.  The top node of this variable becomes the value for the <b>UserParam</b> property of the <b>Manager</b>.
+The first level subscripts and their values are used to populate the <b>UserFields</b> array.
+</dl>
+<br><br>
+Example of RunTest:<br>
+<pre>
+ set ^UnitTestRoot = "c:\test"
+ do ##class(%UnitTest.Manager).RunTest("sql\sqlprocs")
+ do ##class(%UnitTest.Manager).RunTest("sql\sqlprocs","/debug/recursive=0")
+</pre>
+Note: If any of your code needs to run in the <b>%SYS</b> namespace, <b>zn</b> to the <b>%SYS</b> namespace, run the code, then return to another namespace. ]]></Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec><![CDATA[testspec:%String,qspec:%String,&userparam]]></FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	Set sc=..RunTestSuites($g(testspec),.qspec,.userparam)
+	If $$$ISERR(sc) Do $system.Status.DisplayError(sc)
+	Quit sc
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Util.Helper">
+<TimeChanged>66618,65974.8377068</TimeChanged>
+<TimeCreated>66584,33383.7583228</TimeCreated>
+
+<Method name="HasPersistentProperty">
+<Description>
+Get properties using macros wrapping direct global references
+will fill Arr, pass by reference</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec><![CDATA[className:%String,&Arr:%String]]></FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+    // Getting properties via macro-wrapped direct global references is harder to read,
+    // but is the fastest way to do it.
+    set key = ""
+    set i = 1
+    set myArray(1) = ""
+
+    &sql(SELECT Name INTO :class FROM %Dictionary.CompiledClass Where Upper(ID) Like Upper(:className)) //maybe will get parameter as all upper..
+    if (SQLCODE '=0)
+    {
+        set status = $$$ERROR($$$GeneralError, "Failed Searching For Persistent Properties")    
+        return $$$ADDSC(status,SQLCODE)
+    }
+    
+    for {
+        set key = $$$comMemberNext(class,$$$cCLASSproperty,key)
+        quit:key=""
+        set type = $$$comMemberKeyGet(class,$$$cCLASSproperty,key,$$$cPROPtype)
+        set origin = $$$comMemberKeyGet(class,$$$cCLASSproperty,key,$$$cPROPorigin)
+        set properties(key) = $listbuild(type,origin)
+        if ($classmethod(type,"%Extends", "%Persistent"))
+        {
+	        set Arr(i, "PropertyName") = key
+	    	set Arr(i, "PropertyType") = type
+ 			set i = i+1
+	    }
+    }
+    QUIT $$$OK
+]]></Implementation>
+</Method>
+
+<UDLText name="T">
+<Content><![CDATA[
+// time to measure new messages from
+
+]]></Content>
+</UDLText>
+
+<Method name="getNewMessageNum">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>timeStamp:%TimeStamp</FormalSpec>
+<ReturnType>%Integer</ReturnType>
+<Implementation><![CDATA[
+
+	if timeStamp = "" //no prev data, take all
+	{
+		&sql(SELECT Count(*) INTO :myCount FROM Ens.MessageHeader)
+		return myCount
+	}
+	else
+	{
+		&sql(SELECT Count(*) INTO :myCount FROM Ens.MessageHeader WHERE DATEDIFF('ss',:timeStamp,TimeCreated)>0)
+		return myCount
+	}
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Util.REST.impl">
+<Description><![CDATA[
+Retrieve Data of Globals Tables and DB Tables stored in IRIS database<br/>
+Business logic class defined by OpenAPI in Sample.DBExpansion.Util.REST.spec<br/>
+Updated Aug 23, 2023 10:19:26]]></Description>
+<ProcedureBlock>1</ProcedureBlock>
+<Super>%REST.Impl</Super>
+<TimeChanged>66709,37166.3945528</TimeChanged>
+<TimeCreated>66584,33555.0638131</TimeCreated>
+
+<Parameter name="ExposeServerExceptions">
+<Description>
+If ExposeServerExceptions is true, then details of internal errors will be exposed.</Description>
+<Default>0</Default>
+</Parameter>
+
+<Method name="getUniqueGlobal">
+<Description><![CDATA[
+Get stats on one particular database<br/>
+The method arguments hold values for:<br/>
+    globalName, nameofglobal<br/>]]></Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>globalName:%String</FormalSpec>
+<ReturnType>%DynamicObject</ReturnType>
+<Implementation><![CDATA[
+	set obj = {"data": []}
+	set statement = ##class(%SQL.Statement).%New()
+	#; set query = "SELECT GB.GlobalName, GB.ClassName, GB.UsedMB, GB.AllocatedMB, DB.TimeStampEnd FROM Sample_DBExpansion_Data.DBAnalysisInfo AS DB INNER JOIN Sample_DBExpansion_Data.GlobalAnalysisInfo AS GB ON DB.ID = GB.MetaDataID WHERE GlobalName = ?"
+	set query = "SELECT GlobalName, ClassName, UsedMB, AllocatedMB, MetaData->TimeStampEnd FROM Sample_DBExpansion_Data.GlobalAnalysisInfo Where GlobalName = ?"
+	set status = statement.%Prepare(query)
+	set rs = statement.%Execute(globalName)
+		while rs.%Next(){
+			set name = "GlobalName"
+			if ($length(rs.%Get("ClassName")) > 1)
+			{
+				set name = "ClassName"
+			}
+			set global = {
+				"Name": (rs.%Get(name)),
+				"UsedMB": (rs.%Get("UsedMB")),
+				"Date": (rs.%Get("TimeStampEnd")),
+				"UsedMB": ((rs.%Get("UsedMB"))),
+				"AllocatedMB": (rs.%Get("AllocatedMB"))
+			}
+			
+			do obj.data.%Push(global)
+		}
+		d obj.%ToJSON()
+		///set %response.Status = "200"
+	
+	Quit obj
+]]></Implementation>
+</Method>
+
+<Method name="getDBHistory">
+<Description>
+Get stats on single db in table</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec/>
+<ReturnType>%DynamicObject</ReturnType>
+<Implementation><![CDATA[
+    set obj = {"data": []}
+	set query = "SELECT * FROM Sample_DBExpansion_Data.DBAnalysisInfo"
+	set statement = ##class(%SQL.Statement).%New()
+	set status = statement.%Prepare(query)
+	set rs = statement.%Execute() //when use question mark on query and try to use input here having error
+	while rs.%Next(){
+		set DBHistory = {
+			"Name": (rs.%Get("DatabaseName")),
+            "Date": (rs.%Get("TimeStampEnd")),
+            "DBUsedSize": (rs.%Get("DBUsedSize")),	
+            "DBAllocSize": (+rs.%Get("DBAllocatedSize")) //+ here to change it from string with units to just value, will need to proof this... depends on expected sizes
+		}
+		
+		do obj.data.%Push(DBHistory)
+	}
+	d obj.%ToJSON()
+	Quit obj
+]]></Implementation>
+</Method>
+
+<Method name="getAllGlobals">
+<Description>
+Get stats on all globals in table</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec/>
+<ReturnType>%DynamicObject</ReturnType>
+<Implementation><![CDATA[
+	&sql(SELECT MAX(MetaData) INTO :metaID FROM Sample_DBExpansion_Data.GlobalAnalysisInfo)
+	set obj = {"data": []}
+	
+	set query = "SELECT * From Sample_DBExpansion_Data.GlobalAnalysisInfo WHERE MetaData = ?"
+	set statement = ##class(%SQL.Statement).%New()
+	set status = statement.%Prepare(query)
+	set rs = statement.%Execute(metaID)
+
+	while rs.%Next(){
+		set name = "GlobalName"
+		if ($length(rs.%Get("ClassName")) > 1)
+		{
+			set name = "ClassName"
+		}
+		set global = {
+			"Name": (rs.%Get(name)), //will display classname if exists, if not global name
+            "UsedMB": (rs.%Get("UsedMB")),
+			"AllocatedMB": (rs.%Get("AllocatedMB"))
+		}
+		
+		do obj.data.%Push(global)
+	}
+	/// d obj.%ToJSON()
+	Quit obj
+]]></Implementation>
+</Method>
+
+<Method name="getAllGlobalsTable">
+<Description><![CDATA[
+Get stats on one particular database<br/>
+The method arguments hold values for:<br/>
+    timeback, days back to look<br/>]]></Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>timeback:%String</FormalSpec>
+<ReturnType>%DynamicObject</ReturnType>
+<Implementation><![CDATA[
+	try{
+	set obj = {"data": []}
+	
+	set statement1 = ##class(%SQL.Statement).%New()
+	set query1 = "SELECT Distinct(GlobalName) From Sample_DBExpansion_Data.GlobalAnalysisInfo"
+	set status1 = statement1.%Prepare(query1)
+	set rs1 = statement1.%Execute()
+		while rs1.%Next(){
+			set globalName = rs1.%Get("GlobalName")
+			set statement2 = ##class(%SQL.Statement).%New()
+			set query2 = "SELECT MIN(MetaData) AS MINID, MAX(MetaData) AS MAXID FROM Sample_DBExpansion_Data.GlobalAnalysisInfo WHERE GlobalName = ? AND DATEDIFF('dd', MetaData->TimeStampEnd, GETDATE()) <= ?"
+			set status2 = statement2.%Prepare(query2)
+			set rs2 = statement2.%Execute(globalName, timeback)
+	 		while rs2.%Next(){
+	 			set minMetaID = rs2.%Get("MINID")
+	 			set maxMetaID = rs2.%Get("MAXID")
+	 		}
+	 		set statement3 = ##class(%SQL.Statement).%New()
+	 		set query3 = "SELECT ClassName, UsedMB, AllocatedMB, MetaData->TimeStampEnd FROM Sample_DBExpansion_Data.GlobalAnalysisInfo WHERE GlobalName = ? AND MetaData = ?"
+	 		set status3 = statement3.%Prepare(query3)
+	 		set rs3 = statement3.%Execute(globalName, minMetaID)
+	 		while rs3.%Next()
+	 		{
+	 			set oldAllocMB  = rs3.%Get("AllocatedMB")
+	 			set oldUsedMB  = rs3.%Get("UsedMB")
+	 			set oldDate = rs3.%Get("TimeStampEnd")
+	 		}
+			
+	 		set rs4 = statement3.%Execute(globalName, maxMetaID)
+	 		while rs4.%Next()
+	 		{
+	 		///	set newAllocMB  = rs4.%Get("AllocatedMB")
+	 			set newMB  = rs4.%Get("UsedMB")
+	 			set newDate = rs4.%Get("TimeStampEnd")
+	 			set className = rs4.%Get("ClassName")
+	 		}
+			
+	 		try{
+	 			set change = ((newMB - oldUsedMB)/oldUsedMB)*100
+	 		}
+	 		catch ex
+	 		{
+	 			set change = 0
+	 		}
+	 		set change = $DECIMAL(change, 4)
+	 		set global = {
+	 		"Name": (globalName), //will display classname if exists, if not global name
+             "ClassName": (className),
+	 		"OldMB": (oldUsedMB),
+	 		"OldDate": (oldDate),
+	 		"NewMB": (newMB),
+	 		"NewDate": (newDate),
+	 		"Change": (change)
+	 	}
+		
+	 	do obj.data.%Push(global)
+		}
+		Do ..%SetStatusCode(200)
+		return obj
+	}
+	catch error
+	{
+		Do ..%SetStatusCode(400)
+		return "Check that there is data for the dates entered"
+	}
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Sample.DBExpansion.Util.REST.spec">
+<ProcedureBlock>1</ProcedureBlock>
+<Super>%REST.Spec</Super>
+<TimeChanged>66702,52282.2450295</TimeChanged>
+<TimeCreated>66584,34008.0913357</TimeCreated>
+
+<Parameter name="HandleCorsRequest">
+<Default>1</Default>
+</Parameter>
+
+<XData name="OpenAPI">
+<MimeType>application/json</MimeType>
+<Data><![CDATA[
+{
+  "swagger":"2.0",
+  "info":{
+    "description":"Retrieve Data of Globals Tables and DB Tables stored in IRIS database",
+    "version":"1.0.0",
+    "title":"DB Analysis REST API"
+  },
+  "basePath":"/dbAnalysis",
+  "schemes":[
+    "http"
+  ],
+  "paths":{
+    "/globals/all":{
+      "get":{
+        "x-ISC_CORS":true, 
+        "summary":"Get globals info",
+        "description":"Get stats on all globals in table",
+        "operationId":"getAllGlobals",
+        "produces":[
+          "application/json"
+        ],
+        "responses":{
+          "200":{
+            "description":"OK"
+          }
+        }
+      }
+    },
+    "/global/{globalName}":{
+      "get":{
+        "x-ISC_CORS":true,
+        "summary":"Get info on one global",
+        "description":"Get stats on one particular database",
+        "operationId":"getUniqueGlobal",
+        "produces":[
+          "application/json"
+        ],
+        "parameters":[
+          {
+            "name":"globalName",
+            "in":"path",
+            "description":"nameofglobal",
+            "required":true,
+            "type":"string"
+          }
+        ],
+        "responses":{
+          "200":{
+            "description":"OK"
+          }
+        }
+      }
+    },
+        "/globals/table/{timeback}":{
+      "get":{
+        "x-ISC_CORS":true,
+        "summary":"Get info on one global",
+        "description":"Get stats on one particular database",
+        "operationId":"getAllGlobalsTable",
+        "produces":[
+          "application/json"
+        ],
+        "parameters":[
+          {
+            "name":"timeback",
+            "in":"path",
+            "description":"days back to look",
+            "required":true,
+            "type":"string"
+          }
+        ],
+        "responses":{
+          "200":{
+            "description":"OK"
+          }
+        }
+      }
+    },
+    "/db/history":{
+      "get":{
+        "x-ISC_CORS":true,
+        "summary":"Get info on one db",
+        "description":"Get stats on single db in table",
+        "operationId":"getDBHistory",
+        "x-ISC_CORS":true,
+        "produces":[
+          "application/json"
+        ],
+        "responses":{
+          "200":{
+            "description":"OK"
+          }
+        }
+      }
+    }
+  }
+}
+]]></Data>
+</XData>
+</Class>
+
+
+</Export>
