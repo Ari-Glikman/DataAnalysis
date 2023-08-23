@@ -4,7 +4,7 @@ This is the sequel to [Data Collection](https://github.com/Ari-Glikman/DataColle
 
 **Note that all code can be downloaded from the [importable](https://github.com/Ari-Glikman/DataAnalysis/tree/main/Importable) folder, regardless of whether you are seeking both the data collection and data analysis or just the latter.**
 
-**If you already have installed that code, note that there has been updates to make it more efficient. Please download the latest [version2](https://github.com/Ari-Glikman/DataCollection/blob/main/README.md#data-collection), uploaded August 23, or even easier: download the new package from the [importable](https://github.com/Ari-Glikman/DataAnalysis/tree/main/Importable) folder **
+**If you already have installed that code, note that there has been updates to make it more efficient. Please download the latest [version2](https://github.com/Ari-Glikman/DataCollection/blob/main/README.md#data-collection), uploaded August 23, or even easier: download the new package from the [importable](https://github.com/Ari-Glikman/DataAnalysis/tree/main/Importable) folder**
 
 
 What is provided here is the analysis for the collection of that data that was collected earlier.
